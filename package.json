@@ -1,0 +1,29 @@
+{
+  "name": "situation-room",
+  "version": "0.1.0",
+  "description": "Run many Claude Code and Pi coding agents side by side on your Mac.",
+  "license": "MIT",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "daemon": "node daemon.js",
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper || true"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "darwin"
+  ],
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^1.0.3",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "node-pty": "^1.1.0",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "electron": "^44.5.1"
+  },
+  "private": true
+}

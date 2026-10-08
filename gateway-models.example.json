@@ -1,0 +1,4 @@
+[
+  { "id": "anthropic-claude-sonnet-5", "gw": "bedrock/anthropic.claude-sonnet-5", "label": "Sonnet 5", "base": "claude-sonnet-5", "ctx": 1000000, "out": 64000, "cost": [2, 10, 0.2, 2.5], "claude": true },
+  { "id": "gpt-oss-20b", "gw": "bedrock/openai.gpt-oss-20b-1:0", "label": "GPT-OSS 20B", "ctx": 128000, "out": 32000, "cost": [0.07, 0.3, 0, 0] }
+]

@@ -1,0 +1,150 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Situation Room</title>
+  <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside id="sidebar">
+    <div id="drag"><span class="brand"><i class="mark"></i>Situation Room</span></div>
+    <nav id="modes">
+      <button data-mode="tasks"><svg viewBox="0 0 16 16"><path d="M2.5 3.5h11M2.5 8h11M2.5 12.5h7"/></svg>Tasks<span class="n" id="n-tasks"></span><kbd>⌘T</kbd></button>
+      <button data-mode="prs"><svg viewBox="0 0 16 16"><circle cx="4" cy="3.5" r="1.5"/><circle cx="4" cy="12.5" r="1.5"/><circle cx="12" cy="12.5" r="1.5"/><path d="M4 5v6M12 11V7a2 2 0 0 0-2-2H7.5M9 3.5 7.5 5 9 6.5"/></svg>Pull requests<span class="n" id="n-prs"></span><i class="ping" id="ping-prs" hidden></i><kbd>⌘P</kbd></button>
+      <button data-mode="jira"><svg viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5"/><path d="M5.5 8.2 7.2 10 10.5 6"/></svg>Jira<span class="n" id="n-jira"></span><kbd>⌘J</kbd></button>
+    </nav>
+    <div id="filter"><input id="q" placeholder="Filter tasks" spellcheck="false"><kbd>⌘F</kbd></div>
+    <div id="tasks"></div>
+    <div id="usage" hidden title="Estimated from local transcripts at list or gateway prices; your bill may differ.">
+      <div class="u-head" id="u-task"></div>
+      <div class="u-grid">
+        <div><span>Context</span><b id="u-ctx"></b></div>
+        <div><span>In / out</span><b id="u-tok"></b></div>
+        <div><span>Session</span><b id="u-cost"></b></div>
+        <div><span id="u-mlabel"></span><b id="u-month"></b></div>
+      </div>
+      <div class="u-split" id="u-split" hidden>
+        <div class="u-bar"><i class="c" id="u-barc"></i><i class="p" id="u-barp"></i></div>
+        <div class="u-leg"><span><i class="c"></i>Claude Code</span><b id="u-claude"></b></div>
+        <div class="u-leg"><span><i class="p"></i>Pi</span><b id="u-pi"></b></div>
+      </div>
+      <button class="u-more" id="u-more">Breakdown by model<kbd>⌘U</kbd></button>
+    </div>
+    <button id="new" class="primary"><span>New task</span><kbd>⌘N</kbd></button>
+  </aside>
+
+  <main>
+    <section id="taskview">
+      <header id="bar" class="topbar">
+        <div id="title"></div>
+        <nav id="tabs" class="seg">
+          <button data-tab="claude">Agent</button>
+          <button data-tab="shell">Shell</button>
+          <button data-tab="diff">Diff</button>
+        </nav>
+        <div id="actions">
+          <button id="reviewbtn" class="ghost" hidden title="Toggle panel (⌘E)"><svg viewBox="0 0 16 16" class="ic"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M9.5 2.5v11"/></svg><span id="rlabel">Review</span><span id="rcount" class="pill"></span></button>
+          <a id="prlink" class="ghost btn" hidden title="Open in browser">GitHub <span class="ext">↗</span></a>
+          <a id="jiralink" class="ghost btn" hidden title="Open in browser">Jira <span class="ext">↗</span></a>
+          <button id="more" class="ghost icon" title="More">⋯</button>
+          <div id="menu" class="pop" hidden>
+            <button id="restart">Restart terminal</button>
+            <button id="remove" class="danger">Remove task</button>
+          </div>
+        </div>
+      </header>
+      <div id="work">
+        <div id="content">
+          <section id="panes"></section>
+          <div id="diff" hidden></div>
+          <div id="prdiff" hidden></div>
+        </div>
+        <aside id="drawer" hidden><nav id="dnav" class="seg small"></nav><div id="dbody"></div></aside>
+      </div>
+      <div id="empty" class="hero">
+        <div class="mark big"></div>
+        <h2>Every task, one window.</h2>
+        <p>Pick a task, review a PR, or start from a ticket.</p>
+        <div class="hero-actions">
+          <button data-go="new"><b>New task</b><kbd>⌘N</kbd></button>
+          <button data-go="prs"><b>Review PRs</b><kbd>⌘P</kbd></button>
+          <button data-go="jira"><b>My tickets</b><kbd>⌘J</kbd></button>
+        </div>
+      </div>
+    </section>
+
+    <section id="prview" class="view" hidden>
+      <header class="topbar">
+        <h1>Pull requests</h1>
+        <nav id="prscope" class="seg">
+          <button data-scope="review">To review</button>
+          <button data-scope="mine">Mine</button>
+          <button data-scope="updates">Updates<em id="n-upd"></em></button>
+        </nav>
+        <div class="grow"></div>
+        <button id="prrefresh" class="ghost icon" title="Refresh">↻</button>
+      </header>
+      <div id="prrepos" class="chips"></div>
+      <div id="prbody"><div id="prlist" class="list"></div><aside id="prdetail"></aside></div>
+    </section>
+
+    <section id="jiraview" class="view" hidden>
+      <header class="topbar">
+        <h1>Jira</h1>
+        <nav id="jfilter" class="seg">
+          <button data-f="forme">For me</button>
+          <button data-f="assigned">Assigned</button>
+          <button data-f="mentioned">Mentioned</button>
+          <button data-f="watching">Watching</button>
+          <button data-f="reported">Reported</button>
+        </nav>
+        <div class="grow"></div>
+        <div id="jsearch" class="search"><input id="jq" placeholder="Search tickets" spellcheck="false"></div>
+        <button id="jrefresh" class="ghost icon" title="Refresh">↻</button>
+        <button id="jnew" class="primary">New ticket</button>
+      </header>
+      <div id="jprojects" class="chips"></div>
+      <div id="jbody">
+        <div id="jlist" class="list"></div>
+        <aside id="jdetail"></aside>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="dlg" class="sheet">
+    <form method="dialog" id="form">
+      <h3>New task</h3>
+      <label>Name <input name="name" required placeholder="Fix flaky login test" autocomplete="off"></label>
+      <label>Repo or path <span class="pathrow"><input name="repo" list="repos" required placeholder="repo name, owner/repo or ~/some/dir" autocomplete="off"><button type="button" class="ghost" id="dlgbrowse">Browse…</button></span></label>
+      <datalist id="repos"></datalist>
+      <label class="row"><input type="checkbox" name="worktree"> Always use a worktree (otherwise only when the repo is dirty or busy)</label>
+      <label>Resume session ID <input name="resume" placeholder="Optional; from any directory" autocomplete="off"></label>
+      <label class="row"><input type="checkbox" name="fork"> Fork the resumed session, so the original stays as it is</label>
+      <div class="agentpick" id="dlgagent"></div>
+      <p id="err" class="err"></p>
+      <menu><button value="cancel" formnovalidate class="ghost">Cancel</button><button value="ok" class="primary">Create</button></menu>
+    </form>
+  </dialog>
+
+  <dialog id="tdlg" class="sheet wide">
+    <div id="tform"></div>
+  </dialog>
+
+  <dialog id="palette">
+    <input id="pq" placeholder="Jump to a task, PR, ticket or action…" spellcheck="false" autocomplete="off">
+    <div id="pres"></div>
+  </dialog>
+
+  <div id="toasts"></div>
+
+  <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script src="md.js"></script>
+  <script src="app.js"></script>
+  <script src="views.js"></script>
+  <script src="ship.js"></script>
+  <script src="usage.js"></script>
+  <script src="spaces.js"></script>
+</body>
+</html>

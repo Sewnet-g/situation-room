@@ -1,0 +1,24 @@
+{
+  "roots": ["~/code"],
+  "org": "your-github-org",
+  "prRepos": ["your-github-org/some-repo"],
+
+  "spaces": {
+    "personal": { "label": "Personal", "roots": ["~/personal"], "claudeConfigDir": "~/.claude-personal" }
+  },
+
+  "pi": { "mode": "native", "model": "anthropic/claude-sonnet-5" },
+
+  "gateway": {
+    "url": "https://llm-gateway.example.com",
+    "keyFrom": "claude-settings",
+    "models": "gateway-models.json"
+  },
+
+  "jira": {
+    "base": "https://your-site.atlassian.net",
+    "defaultProject": "ABC",
+    "repos": { "ABC": "some-repo" },
+    "team": ["ABC"]
+  }
+}
