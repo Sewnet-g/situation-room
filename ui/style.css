@@ -110,10 +110,15 @@ input[type=checkbox] { width: 14px; height: 14px; accent-color: var(--acc); marg
 
 /* ---- Sidebar ---- */
 #sidebar {
-  width: 268px; flex: none; display: flex; flex-direction: column; padding: 0 10px 10px;
+  width: var(--side, 268px); flex: none; display: flex; flex-direction: column; padding: 0 10px 10px;
   background: rgba(20,22,28,.86); border-right: 1px solid rgba(0,0,0,.5);
   box-shadow: -1px 0 0 rgba(255,255,255,.04) inset;
 }
+body.side-hidden #sidebar { display: none; }
+#sidegrip { flex: none; width: 5px; margin: 0 -3px 0 -2px; cursor: col-resize; position: relative; z-index: 5; }
+#sidegrip:hover, body.side-drag #sidegrip { background: var(--accline); }
+body.side-drag { cursor: col-resize; user-select: none; }
+body.side-drag iframe, body.side-drag .xterm { pointer-events: none; }
 #drag { -webkit-app-region: drag; height: 52px; flex: none; display: flex; align-items: center; justify-content: flex-end; padding-right: 4px; }
 .brand { display: inline-flex; align-items: center; gap: 7px; font-weight: 650; font-size: 12.5px; color: var(--fg2); letter-spacing: .01em; }
 .mark {

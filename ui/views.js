@@ -619,6 +619,7 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'f' && mode === 'jira') go(() => $('#jq').select());
   else if (k === 'e') go(toggleDrawer);
   else if (k === 'u') go(usageSheet);
+  else if (k === 'b') go(toggleSidebar);
   else if (/^[1-9]$/.test(k)) {
     const t = ordered()[Number(k) - 1];
     if (t) go(() => select(t.id));
@@ -629,6 +630,32 @@ window.addEventListener('keydown', (e) => {
     if (t) go(() => select(t.id));
   }
 }, true);
+
+// Sidebar width: drag the edge (220–520px), double-click to reset, ⌘B to hide. Remembered per viewer.
+const SIDE = { min: 220, max: 520, dflt: 268 };
+function setSide(w) {
+  w = Math.round(Math.min(SIDE.max, Math.max(SIDE.min, w)));
+  document.body.style.setProperty('--side', `${w}px`);
+  return w;
+}
+function toggleSidebar() {
+  const hidden = document.body.classList.toggle('side-hidden');
+  store.set('sideHidden', hidden ? '1' : '');
+  refit();
+}
+setSide(Number(store.get('side', SIDE.dflt)) || SIDE.dflt);
+if (store.get('sideHidden', '') === '1') document.body.classList.add('side-hidden');
+$('#sidegrip').onpointerdown = (e) => {
+  if (document.body.classList.contains('side-hidden')) return toggleSidebar();
+  e.preventDefault();
+  const grip = e.currentTarget, x0 = e.clientX, w0 = $('#sidebar').offsetWidth;
+  grip.setPointerCapture(e.pointerId);
+  document.body.classList.add('side-drag');
+  let w = w0;
+  grip.onpointermove = (m) => { w = setSide(w0 + m.clientX - x0); refit(); };
+  grip.onpointerup = () => { grip.onpointermove = grip.onpointerup = null; document.body.classList.remove('side-drag'); store.set('side', String(w)); refit(); };
+};
+$('#sidegrip').ondblclick = () => { store.set('side', String(setSide(SIDE.dflt))); refit(); };
 
 window.addEventListener('resize', refit);
 window.addEventListener('focus', () => current && send({ t: 'seen', id: current }));

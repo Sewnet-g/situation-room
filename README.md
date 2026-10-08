@@ -132,6 +132,7 @@ Starting a task from a ticket assigns it to you and moves it to In Progress, ask
 | ⌘U | Usage breakdown |
 | ⌘⇧. | Switch space |
 | ⌘F | Filter tasks |
+| ⌘B | Hide / show the sidebar (drag its edge to resize, double-click to reset) |
 
 ## Where things live
 
