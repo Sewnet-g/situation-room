@@ -462,6 +462,30 @@ function listPrs(slug) {
   }));
 }
 
+// Comments on a PR, shaped for reading: code threads with their diff hunk, then the conversation. Cached briefly.
+const prTalkAt = new Map();
+function prTalk(slug, number) {
+  const k = `${slug}#${number}`;
+  const hit = prTalkAt.get(k);
+  if (hit && Date.now() - hit.at < 30_000) return hit.data;
+  const [o, n] = slug.split('/');
+  const pr = JSON.parse(gh(['api', 'graphql', '-f', `query=${THREADS_Q}`, '-f', `o=${o}`, '-f', `n=${n}`, '-F', `num=${Number(number)}`])).data.repository.pullRequest;
+  const who = (a) => a?.login || 'ghost';
+  const data = {
+    threads: pr.reviewThreads.nodes.map((th) => ({
+      path: th.path, line: th.line ?? th.originalLine, side: th.diffSide, resolved: th.isResolved, outdated: th.isOutdated,
+      hunk: th.comments.nodes[0]?.diffHunk || '',
+      comments: th.comments.nodes.map((c) => ({ author: who(c.author), body: c.body, at: c.createdAt, url: c.url })),
+    })),
+    general: [
+      ...pr.reviews.nodes.filter((r) => r.body.trim()).map((r) => ({ kind: 'review', state: r.state, author: who(r.author), body: r.body, at: r.submittedAt, url: r.url })),
+      ...pr.comments.nodes.map((c) => ({ kind: 'comment', author: who(c.author), body: c.body, at: c.createdAt, url: c.url })),
+    ].sort((a, b) => a.at.localeCompare(b.at)),
+  };
+  prTalkAt.set(k, { at: Date.now(), data });
+  return data;
+}
+
 function prDetail(slug, number) {
   const p = JSON.parse(gh(['pr', 'view', String(number), '-R', slug, '--json',
     'number,title,author,body,isDraft,url,headRefName,baseRefName,createdAt,updatedAt,additions,deletions,changedFiles,files,labels,reviewDecision,latestReviews']));
@@ -1216,7 +1240,7 @@ function dropWorktree(repoPath, cwd) {
 // closed: the PR is merged or closed, so unpushed commits are already in it and only uncommitted files count.
 function removeTask(id, { worktree = true, force = false, closed = false } = {}) {
   const t = task(id);
-  if (!t || t.pinned) return {};
+  if (!t || t.id === 'builder') return {};
   // A closed PR's commits are already on GitHub, so a manual remove treats it like the sweep does.
   if (!closed && isWorktree(t) && (prOf(t) || t.branch)) { try { closed = ['MERGED', 'CLOSED'].includes(prStateOf(t)); } catch {} }
   // A worktree another task still works in stays, whatever the caller asked.
@@ -1244,6 +1268,7 @@ function prStateOf(t) {
 
 function sweepWorktrees() {
   for (const t of [...state.tasks]) {
+    // A pinned task is kept on purpose, so the sweep leaves it.
     if (t.pinned || ['working', 'waiting'].includes(t.status) || !(prOf(t) || t.branch)) continue;
     if (!['MERGED', 'CLOSED'].includes(prStateOf(t))) continue;
     const r = removeTask(t.id, { closed: true });
@@ -1391,6 +1416,7 @@ const server = http.createServer(async (req, res) => {
     if (parts[0] === 'prs') {
       const slug = parts.slice(1, 3).join('/');
       if (req.method === 'GET' && !slug) return json(200, config.prRepos.map((s) => ({ slug: s, path: localClone(s) || null })));
+      if (req.method === 'GET' && parts[3] && parts[4] === 'comments') return json(200, prTalk(slug, parts[3]));
       if (req.method === 'GET' && parts[3]) return json(200, prDetail(slug, parts[3]));
       if (req.method === 'GET') return json(200, listPrs(slug));
       if (req.method === 'POST') {
@@ -1412,6 +1438,18 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'POST' && parts[2] === 'submit') return json(200, submitReview(t, readJsonStr(await body(req))));
     }
     if (req.method === 'POST' && parts[0] === 'tasks') return json(200, await createTask(readJsonStr(await body(req))));
+    // Small edits from the task menu; only these fields, and the Builder stays pinned.
+    if (req.method === 'PATCH' && parts[0] === 'tasks') {
+      const t = task(parts[1]);
+      if (!t) return json(404, { error: 'no such task' });
+      const b = readJsonStr(await body(req));
+      if (typeof b.name === 'string' && b.name.trim()) t.name = b.name.trim().slice(0, 120);
+      if (typeof b.pinned === 'boolean' && t.id !== 'builder') t.pinned = b.pinned;
+      if (b.status === 'idle' && ['done', 'stopped', 'waiting'].includes(t.status)) t.status = 'idle';
+      save();
+      publish();
+      return json(200, t);
+    }
     if (req.method === 'DELETE' && parts[0] === 'tasks') {
       return json(200, removeTask(parts[1], { worktree: url.searchParams.get('worktree') !== '0', force: url.searchParams.get('force') === '1' }));
     }

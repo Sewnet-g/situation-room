@@ -63,9 +63,46 @@ async function loadPrDetail() {
       <div class="jact"><span id="pract"></span><a class="ghost btn" href="${esc(p.url)}">Open on GitHub <span class="ext">↗</span></a></div>
     </div>
     <div class="jdesc rich">${p.body?.trim() ? md(p.body) : '<p class="dim">No description.</p>'}</div>
+    <div id="prtalk"><div class="loading dim">Loading comments…</div></div>
     <div class="lbl">Files · ${p.files.length}</div>
     <div class="prfiles">${p.files.map((f) => `<div><span class="mono">${esc(f.path)}</span><span class="mono"><span class="add">+${f.add}</span> <span class="del">−${f.del}</span></span></div>`).join('')}</div>`;
   if (sel.action) $('#pract').replaceWith(sel.action());
+  loadPrTalk(sel);
+}
+
+// Code comments as GitHub shows them: the diff lines they point at, then the thread. Conversation comments follow.
+async function loadPrTalk(sel) {
+  let c;
+  try { c = await api(`/prs/${sel.slug}/${sel.number}/comments`); } catch (e) { if (prSel === sel) $('#prtalk').innerHTML = `<div class="loading err">${esc(e.message)}</div>`; return; }
+  if (prSel !== sel || !$('#prtalk')) return;
+  const open = c.threads.filter((t) => !t.resolved && !t.outdated);
+  const box = $('#prtalk');
+  if (!c.threads.length && !c.general.length) { box.innerHTML = ''; return; }
+  const by = (x) => `${avatar(x.author)}<b>@${esc(x.author)}</b><span class="dim">${ago(x.at)}</span><a class="ext" href="${esc(x.url)}" title="Open on GitHub">↗</a>`;
+  const thread = (t) => `<div class="cth${t.resolved || t.outdated ? ' done' : ''}">
+      <div class="cth-h"><span class="mono">${esc(t.path)}</span><span class="dim">line ${t.line ?? '?'}</span>${t.resolved ? '<span class="tag ok">resolved</span>' : ''}${t.outdated ? '<span class="tag">outdated</span>' : ''}</div>
+      ${hunkTail(t.hunk)}
+      ${t.comments.map((x) => `<div class="cth-c"><div class="mh">${by(x)}</div><div class="md">${md(x.body)}</div></div>`).join('')}
+    </div>`;
+  const done = c.threads.length - open.length;
+  box.innerHTML = `
+    ${c.threads.length ? `<div class="lbl">Code comments · ${open.length} open${done ? ` · ${done} resolved or outdated` : ''}</div>
+      ${open.map(thread).join('')}
+      ${done ? `<details class="cth-more"><summary>Show ${done} resolved or outdated</summary>${c.threads.filter((t) => t.resolved || t.outdated).map(thread).join('')}</details>` : ''}` : ''}
+    ${c.general.length ? `<div class="lbl">Conversation · ${c.general.length}</div>
+      ${c.general.map((g) => `<div class="msg">${avatar(g.author)}<div class="mb"><div class="mh"><b>@${esc(g.author)}</b>
+        ${g.kind === 'review' ? `<span class="tag ${{ APPROVED: 'ok', CHANGES_REQUESTED: 'bad' }[g.state] || ''}">${esc(g.state.toLowerCase().replace('_', ' '))}</span>` : ''}
+        <span class="dim">${ago(g.at)}</span><a class="ext" href="${esc(g.url)}">↗</a></div><div class="md">${md(g.body)}</div></div></div>`).join('')}` : ''}`;
+}
+
+// The last few lines of a thread's diff hunk, ending at the commented line, coloured like a diff.
+function hunkTail(hunk) {
+  const lines = String(hunk || '').split('\n').filter((l) => !l.startsWith('@@'));
+  if (!lines.length) return '';
+  return `<div class="cth-code">${lines.slice(-4).map((l, i, a) => {
+    const k = l.startsWith('+') ? 'add' : l.startsWith('-') ? 'del' : 'ctx';
+    return `<div class="dl ${k}${i === a.length - 1 ? ' at' : ''}"><span class="c">${esc(l)}</span></div>`;
+  }).join('')}</div>`;
 }
 
 function watchBadges(x) {
@@ -575,8 +612,8 @@ $('#restart').onclick = () => {
   send({ t: 'restart', id: current, kind: tab === 'diff' ? 'claude' : tab });
   setTimeout(show, 300);
 };
-$('#remove').onclick = async () => {
-  const t = cur();
+$('#remove').onclick = () => removeTaskFlow(cur());
+async function removeTaskFlow(t) {
   if (!t) return;
   const r = await api(`/tasks/${t.id}/risk`).catch(() => ({ worktree: false, risk: [] }));
   const body = !r.worktree ? '<p>The session ends. The branch stays.</p>'
@@ -591,7 +628,95 @@ $('#remove').onclick = async () => {
   document.removeEventListener('change', onChange);
   if (!ok) return;
   await api(`/tasks/${t.id}?worktree=${!r.risk.length || force ? 1 : 0}&force=${force ? 1 : 0}`, { method: 'DELETE' });
-};
+}
+
+// ---- Task context menu (right-click a task in the sidebar) ----
+
+const copy = (text, what) => navigator.clipboard.writeText(text).then(() => toast(`Copied ${what}.`, 'ok', 1800), () => toast('Copy failed.', 'bad'));
+const patchTask = (t, body) => api(`/tasks/${t.id}`, { method: 'PATCH', body }).catch((e) => toast(esc(e.message), 'bad'));
+
+function taskMenuItems(t) {
+  const builder = t.id === 'builder';
+  const pr = prOf(t);
+  return [
+    { label: 'Open', run: () => select(t.id) },
+    { label: 'Open shell', run: () => { tab = 'shell'; select(t.id); } },
+    { label: 'Open changes', hide: !t.git, run: () => { tab = 'diff'; select(t.id); } },
+    '-',
+    { label: t.pinned ? 'Unpin' : 'Pin to top', hide: builder, run: () => patchTask(t, { pinned: !t.pinned }) },
+    { label: 'Rename…', run: () => renameTask(t) },
+    { label: 'Mark as read', hide: !['done', 'stopped', 'waiting'].includes(t.status), run: () => patchTask(t, { status: 'idle' }) },
+    '-',
+    { label: 'Open pull request ↗', hide: !pr, run: () => window.sr?.open(pr.url) },
+    { label: 'Open Jira ticket ↗', hide: !t.jira, run: () => window.sr?.open(t.jira.url) },
+    { label: 'Start a task with this session', hint: 'fork', run: () => forkTask(t) },
+    '-',
+    { label: 'Copy session ID', run: () => copy(t.sessionId, 'the session ID') },
+    { label: 'Copy branch name', hide: !t.branch, run: () => copy(t.branch, 'the branch name') },
+    { label: 'Copy folder path', run: () => copy(t.cwd, 'the folder path') },
+    '-',
+    { label: 'Restart agent', run: () => { const x = terms.get(`${t.id}:claude`); if (x) x.attached = false; send({ t: 'restart', id: t.id, kind: 'claude' }); if (t.id === current) setTimeout(show, 300); } },
+    { label: 'Remove task…', danger: true, hide: builder, run: () => removeTaskFlow(t) },
+  ];
+}
+
+let ctx = null;
+function closeCtx() { ctx?.remove(); ctx = null; }
+function openCtx(t, x, y) {
+  closeCtx();
+  const items = taskMenuItems(t).filter((i) => i === '-' || !i.hide)
+    .filter((i, n, a) => i !== '-' || (n > 0 && a[n - 1] !== '-' && n < a.length - 1));
+  ctx = document.createElement('div');
+  ctx.className = 'pop ctx';
+  ctx.setAttribute('role', 'menu');
+  ctx.innerHTML = `<div class="ctx-h">${esc(t.name)}</div>` + items.map((i, n) => (i === '-' ? '<hr>'
+    : `<button role="menuitem" data-n="${n}" class="${i.danger ? 'danger' : ''}">${esc(i.label)}${i.hint ? `<span class="dim">${esc(i.hint)}</span>` : ''}</button>`)).join('');
+  document.body.appendChild(ctx);
+  // Keep the menu on screen near the pointer.
+  const r = ctx.getBoundingClientRect();
+  ctx.style.left = `${Math.min(x, innerWidth - r.width - 8)}px`;
+  ctx.style.top = `${Math.min(y, innerHeight - r.height - 8)}px`;
+  ctx.querySelectorAll('button').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); const i = items[b.dataset.n]; closeCtx(); i.run(); }));
+  ctx.querySelector('button')?.focus();
+  ctx.onkeydown = (e) => {
+    const bs = [...ctx.querySelectorAll('button')], k = bs.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); bs[(k + (e.key === 'ArrowDown' ? 1 : -1) + bs.length) % bs.length].focus(); }
+    else if (e.key === 'Escape') closeCtx();
+  };
+}
+document.addEventListener('mousedown', (e) => { if (ctx && !ctx.contains(e.target)) closeCtx(); });
+window.addEventListener('blur', closeCtx);
+$('#tasks').addEventListener('contextmenu', (e) => {
+  const row = e.target.closest('.task');
+  if (!row) return;
+  e.preventDefault();
+  const t = tasks.find((x) => x.id === row.dataset.id);
+  if (t) openCtx(t, e.clientX, e.clientY);
+});
+
+async function renameTask(t) {
+  const d = document.createElement('dialog');
+  d.className = 'sheet';
+  d.innerHTML = `<form method="dialog"><h3>Rename task</h3><label>Name <input name="n" required autocomplete="off" spellcheck="false"></label>
+    <menu><button value="cancel" formnovalidate class="ghost">Cancel</button><button value="ok" class="primary">Rename</button></menu></form>`;
+  document.body.appendChild(d);
+  const f = d.querySelector('form');
+  f.n.value = t.name;
+  d.onclose = () => { const v = f.n.value.trim(); if (d.returnValue === 'ok' && v && v !== t.name) patchTask(t, { name: v }); d.remove(); };
+  d.showModal();
+  f.n.select();
+}
+
+// Opens New task with this task's folder and session filled in, forked so the original stays as it is.
+async function forkTask(t) {
+  await newTask();
+  const f = $('#form');
+  f.name.value = `${t.name} (fork)`;
+  f.repo.value = tilde(t.cwd);
+  f.resume.value = t.sessionId;
+  f.fork.checked = true;
+  f.name.select();
+}
 
 // Every external link opens in the default browser.
 document.addEventListener('click', (e) => {

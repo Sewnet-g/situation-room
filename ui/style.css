@@ -273,6 +273,13 @@ main > section { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .pop button { width: 100%; justify-content: flex-start; background: transparent; border: 0; height: 28px; border-radius: 6px; }
 .pop button:hover { background: var(--press); }
 @keyframes pop { from { opacity: 0; transform: translateY(-4px) scale(.98); } }
+.pop.ctx { position: fixed; right: auto; top: 0; min-width: 220px; max-width: 300px; z-index: 60; }
+.ctx-h { padding: 5px 9px 6px; font-size: 11px; font-weight: 600; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pop.ctx hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; }
+.pop.ctx button { font-size: 12.5px; gap: 8px; }
+.pop.ctx button .dim { margin-left: auto; font-size: 11px; }
+.pop.ctx button.danger { color: var(--bad); }
+.pop.ctx button:focus-visible { outline: none; background: var(--press); }
 
 #work { flex: 1; min-height: 0; display: flex; }
 #content { flex: 1; min-width: 0; display: flex; position: relative; }
@@ -763,6 +770,20 @@ dialog::backdrop { background: rgba(5,6,10,.55); backdrop-filter: blur(3px); ani
 .row.pr { cursor: pointer; }
 .row.pr.sel { background: rgba(139,124,255,.1); border-color: var(--accline); }
 #prdetail .add { color: var(--ok); } #prdetail .del { color: var(--bad); }
+#prtalk { max-width: 760px; margin-bottom: 8px; }
+.cth { margin: 8px 0 12px; border: 1px solid var(--line2); border-radius: 10px; overflow: hidden; background: var(--raise); }
+.cth.done { opacity: .6; }
+.cth-h { display: flex; align-items: center; gap: 8px; padding: 7px 12px; font-size: 12px; background: rgba(0,0,0,.18); border-bottom: 1px solid var(--line); }
+.cth-h .mono { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cth-code { font: 12px/1.55 var(--mono); border-bottom: 1px solid var(--line); background: var(--bg); }
+.cth-code .dl { cursor: default; }
+.cth-code .dl .c { padding: 0 12px; }
+.cth-code .dl.at { box-shadow: 3px 0 0 var(--warn) inset; }
+.cth-code .dl:hover { background-image: none; }
+.cth-c { padding: 9px 12px; }
+.cth-c + .cth-c { border-top: 1px solid var(--line); }
+.cth-c .mh .ext { margin-left: auto; color: var(--dim); }
+.cth-more summary { cursor: pointer; color: var(--dim); font-size: 12px; margin: 4px 0 8px; }
 .prfiles { max-width: 760px; font-size: 12px; }
 .prfiles > div { display: flex; justify-content: space-between; gap: 16px; padding: 5px 0; border-bottom: 1px solid var(--line); }
 .prfiles > div > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

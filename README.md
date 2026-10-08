@@ -11,11 +11,12 @@ Situation Room is a desktop app for [Claude Code](https://code.claude.com) and [
 - **Tasks side by side.** Each task is a full terminal session. The sidebar shows which ones are working, waiting for you, or done.
 - **Branches handled for you.** A new task branches off `origin/main` in your repo, or in a worktree beside it when the checkout is busy. Removing the task cleans up the worktree.
 - **Claude Code or Pi, per task.** Choose the harness, model and effort when you start. Pi lets you switch models mid-task.
-- **Pull requests.** Review a PR in its own worktree; the agent drafts comments, you edit and submit them. On your own PRs, the agent works through review threads and drafts replies.
+- **Pull requests.** Read a PR's description, line comments (with the code they point at) and conversation. Review it in its own worktree; the agent drafts comments, you edit and submit them. On your own PRs, the agent works through review threads and drafts replies.
 - **Ship.** Drafts commits and a draft PR from your changes. It only types the commands; you press Enter.
 - **Usage.** Tokens and cost per session, per model and per harness, with a what-if against a single model (⌘U).
 - **Spaces.** Keep personal projects out of your work view, with their own Claude login (⌘⇧.).
 - **Jira** (optional). Browse tickets and start a task from one.
+- **Task menu.** Right-click a task to pin it, rename it, fork its session into a new task, copy its session ID, branch or folder, restart its agent, or remove it.
 
 ![New task](docs/new-task.png)
 

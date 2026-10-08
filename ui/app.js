@@ -159,6 +159,7 @@ function renderSidebar() {
       const i = order.indexOf(t);
       const k = kindOf(t);
       const el = document.createElement('div');
+      el.dataset.id = t.id;
       el.className = `task st-${t.status}` + (t.id === current ? ' active' : '') + (t.harness === 'pi' ? ' h-pi' : '');
       const sub = LABEL[t.status] ? `<b>${LABEL[t.status]}</b>${t.updatedAt ? ` · ${ago(t.updatedAt)}` : ''}` : esc(t.label || KIND[k]);
       el.innerHTML = `<span class="ico k-${k}">${t.pinned ? ICON.pin : ICON[k]}<i class="dot ${t.status}"></i>${t.harness === 'pi' ? '<i class="pib" title="Pi">π</i>' : ''}</span>
@@ -185,7 +186,7 @@ function renderBar() {
   $('#title').innerHTML = `<span class="ico k-${k}">${t.pinned ? ICON.pin : ICON[k]}${t.harness === 'pi' ? '<i class="pib">π</i>' : ''}</span>
     <div><b>${esc(t.name)}</b><small>${esc(t.label || t.branch || tilde(t.cwd))}${t.harness === 'pi' || t.model ? ` · ${t.harness === 'pi' ? 'Pi' : 'Claude'}${t.model ? ` ${esc(modelLabel(t.model))}` : ''}` : ''}</small></div>`;
   for (const b of $$('#tabs button')) b.classList.toggle('on', b.dataset.tab === tab);
-  $('#remove').hidden = !!t.pinned;
+  $('#remove').hidden = t.id === 'builder';
   const panel = hasPanel(t);
   $('#reviewbtn').hidden = !panel;
   $('#rlabel').textContent = k === 'review' ? 'Review' : PTAB[ptabOf(t)];
