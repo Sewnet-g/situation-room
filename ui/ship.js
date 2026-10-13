@@ -113,6 +113,7 @@ function saveShip() {
 
 function shipAction(s, d) {
   const committing = d.commits.some((c) => c.files.length && c.message.trim());
+  if (s.onMain) return committing ? `Commit & push to ${s.baseName}` : s.commits.length ? `Push to ${s.baseName}` : null;
   const open = s.pr?.state === 'OPEN';
   if (committing) return open ? 'Commit & push' : 'Commit & open draft PR';
   if (s.commits.length) return open ? 'Push' : 'Push & open draft PR';
@@ -129,12 +130,13 @@ function renderShip() {
   const action = shipAction(s, d);
   const left = loose();
   const nothing = !s.files.length && !s.commits.length;
-  const needBranch = s.onBase || /^(situation-room|cockpit)\//.test(s.branch);
+  const needBranch = !s.onMain && (s.onBase || /^(situation-room|cockpit)\//.test(s.branch));
   const prChip = s.pr ? `<a class="prchip ${s.pr.state === 'OPEN' ? (s.pr.isDraft ? 'draft' : 'open') : 'closed'}" href="${esc(s.pr.url)}">
       <span class="i"></span>#${s.pr.number} · ${s.pr.state === 'OPEN' ? (s.pr.isDraft ? 'Draft' : 'Open') : s.pr.state.toLowerCase()} <span class="ext">↗</span></a>` : '';
   dbx.innerHTML = `
     <header class="dh">
-      <div><h4>Ship</h4><small class="flow"><span>${esc(s.baseName)}</span><i>←</i><b>${esc(needBranch && d.branch ? d.branch : s.branch)}</b></small></div>
+      <div><h4>Ship</h4>${s.onMain ? `<small class="flow onmain"><b>Straight to ${esc(s.baseName)}</b> · no branch, no PR</small>`
+        : `<small class="flow"><span>${esc(s.baseName)}</span><i>←</i><b>${esc(needBranch && d.branch ? d.branch : s.branch)}</b></small>`}</div>
       ${prChip}
       <button class="ghost icon xs" id="sh-refresh" title="Refresh">↻</button>
     </header>
@@ -186,7 +188,9 @@ function renderShip() {
   if ($('#sh-add')) $('#sh-add').onclick = () => { d.commits.push({ message: s.jiraKey ? `${s.jiraKey} ` : '', files: [] }); saveShip(); renderShip(); focusMsg(d.commits.length - 1); };
 
   // Pull request
-  if (open) {
+  if (s.onMain) {
+    body.insertAdjacentHTML('beforeend', `<p class="note onmain">These commits go straight to <b>${esc(s.baseName)}</b> on origin, after a rebase onto its latest. No pull request.</p>`);
+  } else if (open) {
     body.insertAdjacentHTML('beforeend', `<div class="lbl">Pull request</div>
       <a class="prcard" href="${esc(s.pr.url)}"><span class="prc-i ${s.pr.isDraft ? 'draft' : ''}">${ICON.review}</span>
       <span><b>${esc(s.pr.title)}</b><small>#${s.pr.number} · ${s.pr.isDraft ? 'Draft' : 'Open'} · pushing updates it</small></span><span class="ext">↗</span></a>`);
@@ -212,7 +216,7 @@ function renderShip() {
   if ($('#sh-ask')) {
     const chips = s.files.length && planned
       ? [{ label: 'Replan' }, { label: 'One commit', note: 'Use a single commit for everything.' }, { label: 'Split more', note: 'Split into more commits where concerns differ.' }, { label: 'Shorter PR', note: 'Make the PR body shorter and plainer.' }]
-      : !open ? [{ label: 'Write PR', note: 'Only rewrite the PR title and body for the commits already on this branch.' }] : [];
+      : !open && !s.onMain ? [{ label: 'Write PR', note: 'Only rewrite the PR title and body for the commits already on this branch.' }] : [];
     const el = $('#sh-ask');
     el.innerHTML = `${chips.length ? `<div class="chips">${chips.map((c, i) => `<button class="chip" data-i="${i}">${ICON.spark}${c.label}</button>`).join('')}</div>` : ''}
       <div class="ask"><textarea rows="1" placeholder="${planned ? 'Refine the plan: e.g. keep the test changes separate' : 'Notes for the plan (optional)'}"></textarea><button class="send" title="Plan (↵)">↑</button></div>`;
@@ -381,6 +385,8 @@ async function runShip() {
     if (x.startsWith('git switch -c')) return ['branch', `Create branch <b>${esc(d.branch)}</b>`];
     if (x.startsWith('git branch -m')) return ['branch', `Rename branch to <b>${esc(d.branch)}</b>`];
     if (x.startsWith('git add')) return ['commit', esc(x.match(/commit -q -m '((?:[^']|'\\'')*)'/)?.[1].replace(/'\\''/g, "'") || 'Commit')];
+    if (x.startsWith('git pull --rebase')) return ['branch', `Rebase onto the latest <b>${esc(s.baseName)}</b>`];
+    if (x.startsWith('git push') && s.onMain) return ['ship', `Push straight to <b>${esc(s.baseName)}</b> on origin`];
     if (x.startsWith('git push')) return ['ship', `Push to <b>origin</b>`];
     return ['review', `Open <b>draft</b> PR into <b>${esc(s.baseName)}</b>`];
   };

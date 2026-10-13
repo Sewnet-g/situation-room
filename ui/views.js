@@ -636,6 +636,7 @@ const copy = (text, what) => navigator.clipboard.writeText(text).then(() => toas
 const patchTask = (t, body) => api(`/tasks/${t.id}`, { method: 'PATCH', body }).catch((e) => toast(esc(e.message), 'bad'));
 
 function taskMenuItems(t) {
+  // The Builder comes with the app, so it can't be unpinned or removed here.
   const builder = t.id === 'builder';
   const pr = prOf(t);
   return [
@@ -646,6 +647,8 @@ function taskMenuItems(t) {
     { label: t.pinned ? 'Unpin' : 'Pin to top', hide: builder, run: () => patchTask(t, { pinned: !t.pinned }) },
     { label: 'Rename…', run: () => renameTask(t) },
     { label: 'Mark as read', hide: !['done', 'stopped', 'waiting'].includes(t.status), run: () => patchTask(t, { status: 'idle' }) },
+    { label: t.onMain ? 'Stop pushing straight to main' : 'Push straight to main', hide: !config.spaces?.[t.space]?.allowMain || !t.git,
+      run: () => patchTask(t, { onMain: !t.onMain }).then((r) => r?.id && toast(r.onMain ? `Ship now pushes straight to <b>${esc(r.branch)}</b>.` : 'Ship is back to branch and draft PR.', 'ok')) },
     '-',
     { label: 'Open pull request ↗', hide: !pr, run: () => window.sr?.open(pr.url) },
     { label: 'Open Jira ticket ↗', hide: !t.jira, run: () => window.sr?.open(t.jira.url) },

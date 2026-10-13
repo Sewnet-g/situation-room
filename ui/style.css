@@ -115,8 +115,14 @@ input[type=checkbox] { width: 14px; height: 14px; accent-color: var(--acc); marg
   box-shadow: -1px 0 0 rgba(255,255,255,.04) inset;
 }
 body.side-hidden #sidebar { display: none; }
+/* The window's traffic lights sit at the left edge; with no sidebar, the top bars start after them. */
+body.side-hidden .topbar { padding-left: 84px; }
 #sidegrip { flex: none; width: 5px; margin: 0 -3px 0 -2px; cursor: col-resize; position: relative; z-index: 5; }
 #sidegrip:hover, body.side-drag #sidegrip { background: var(--accline); }
+/* With the sidebar hidden the grip becomes a visible tab to bring it back. */
+body.side-hidden #sidegrip { width: 14px; margin: 0; cursor: pointer; background: var(--raise); border-right: 1px solid var(--line); display: grid; place-items: center; }
+body.side-hidden #sidegrip::after { content: '›'; color: var(--dim); font-size: 14px; }
+body.side-hidden #sidegrip:hover { background: var(--raise2); }
 body.side-drag { cursor: col-resize; user-select: none; }
 body.side-drag iframe, body.side-drag .xterm { pointer-events: none; }
 #drag { -webkit-app-region: drag; height: 52px; flex: none; display: flex; align-items: center; justify-content: flex-end; padding-right: 4px; }
@@ -157,6 +163,15 @@ body.side-drag iframe, body.side-drag .xterm { pointer-events: none; }
   text-transform: uppercase; letter-spacing: .07em; color: var(--faint);
 }
 .group em { font-style: normal; font-weight: 500; }
+button.group { width: 100%; border: 0; background: none; cursor: pointer; text-align: left; height: auto; border-radius: 6px; }
+button.group:hover { color: var(--fg2); }
+.group span { display: inline-flex; align-items: center; gap: 5px; }
+.group .chev { width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid currentColor; opacity: .55; transition: transform .12s; }
+.group.shut .chev { transform: rotate(-90deg); }
+.group em b { color: var(--acc2); font-weight: 650; }
+.group .gadd { margin-left: auto; margin-right: 8px; width: 16px; height: 16px; display: grid; place-items: center; border-radius: 4px; font-size: 13px; font-weight: 500; color: var(--dim); }
+.group .gadd:hover { background: var(--press); color: var(--fg); }
+.ico.k-debug { color: #ff9d9d; background: rgba(255,107,107,.1); }
 .task {
   position: relative; display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 8px; margin-bottom: 1px;
   transition: background .1s;
@@ -549,6 +564,10 @@ dialog::backdrop { background: rgba(5,6,10,.55); backdrop-filter: blur(3px); ani
 .sheet.start { width: 480px; }
 .ss-sub { margin: -8px 0 2px; color: var(--dim); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sheet input:disabled { color: var(--dim); }
+.flow.onmain b, .note.onmain b { color: var(--warn); }
+.note.onmain { border-left: 2px solid var(--warn); padding-left: 8px; }
+#dlgtype { align-self: flex-start; margin: -4px 0 2px; }
+.sheet textarea[name=report] { font: 12px/1.5 var(--mono); resize: vertical; min-height: 110px; }
 .pathrow { display: flex; gap: 6px; }
 .pathrow input { flex: 1; min-width: 0; }
 .pathrow button { flex: none; height: auto; border-color: var(--line2); }

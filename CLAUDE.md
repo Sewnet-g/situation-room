@@ -48,11 +48,20 @@ Config is `~/.situation-room/config.json` (see `config.example.json`); defaults 
 - Without a gateway Pi runs natively: its models are whatever `pi --list-models` reports for the user's Pi logins and API keys.
 - Helper calls (`claude -p` for branch names, Ship, ticket drafts) run under the task's Claude config dir.
 
+## Debug tasks
+
+- New task → Debug (or + on the Debug group) creates a `kind: 'debug'` task for one incident on any repo: always a fresh worktree and branch off `origin/main` (`createTask` with `debug` and `report`); the report is its first message. `config.debug` entries are optional extras (namespace, notes, index), matched to the repo by `debugSettings`.
+- At launch the guide (`prompts/debug.md`, plus the project's `notes` file and namespace) is written to `~/.situation-room/prompts/<task>.md` and passed with `--append-system-prompt` (both harnesses).
+- `tools/` goes on the agent's PATH; `sr-logs` queries Elasticsearch through Kibana's `/api/console/proxy` and filters errors by the `level` field. `SR_LOGS_*` come from `.env`; `config.logs.url` supplies the URL.
+- Sidebar groups collapse on click (`collapsed` in localStorage); a filter shows matches in collapsed groups. The Debug group always shows when projects exist.
+- The cleanup sweep never removes an unowned worktree younger than an hour.
+
 ## Spaces
 
 - `config.spaces` defines extra spaces, cycled with ⌘⇧. — each shows only its own tasks; PRs and Jira are work-only.
 - A space with `claudeConfigDir` runs Claude Code with `CLAUDE_CONFIG_DIR` set and no `ANTHROPIC_*` variables (absent, not blank — blank breaks the login), so it uses that dir's own `/login`. No Pi there; gateway model ids map to Anthropic's via `base`.
 - Usage counts those dirs as subscription usage: tokens, no cost.
+- `allowMain` on a space allows `onMain` tasks: the repo's own checkout on the default branch (must be clean and free), and a Ship command of commit, `pull --rebase`, `push origin HEAD:<base>` with no PR. `createTask` and `shipState` both check the space, so a work task can't get it even with an edited state file.
 
 Pty replay trims old output, so the daemon tracks input modes (bracketed paste, focus, mouse) and re-sends them on attach. Status comes from Claude Code hooks injected via `--settings`, or the Pi extension, which POST to `/hook/<task>/<event>`.
 

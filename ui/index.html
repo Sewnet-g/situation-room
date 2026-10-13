@@ -116,12 +116,15 @@
   <dialog id="dlg" class="sheet">
     <form method="dialog" id="form">
       <h3>New task</h3>
+      <div class="seg" id="dlgtype" hidden><button type="button" data-type="task" class="on">Task</button><button type="button" data-type="debug">Debug</button></div>
       <label>Name <input name="name" required placeholder="Fix flaky login test" autocomplete="off"></label>
+      <label class="for-debug" hidden>What happened <textarea name="report" rows="7" placeholder="Paste the Slack thread, alert or error. Include times and any refs."></textarea></label>
       <label>Repo or path <span class="pathrow"><input name="repo" list="repos" required placeholder="repo name, owner/repo or ~/some/dir" autocomplete="off"><button type="button" class="ghost" id="dlgbrowse">Browse…</button></span></label>
       <datalist id="repos"></datalist>
-      <label class="row"><input type="checkbox" name="worktree"> Always use a worktree (otherwise only when the repo is dirty or busy)</label>
-      <label>Resume session ID <input name="resume" placeholder="Optional; from any directory" autocomplete="off"></label>
-      <label class="row"><input type="checkbox" name="fork"> Fork the resumed session, so the original stays as it is</label>
+      <label class="row for-task"><input type="checkbox" name="worktree"> Always use a worktree (otherwise only when the repo is dirty or busy)</label>
+      <label class="row for-task onmain-opt" hidden><input type="checkbox" name="onmain"> Work on main: no branch or worktree, and Ship pushes straight to main</label>
+      <label class="for-task">Resume session ID <input name="resume" placeholder="Optional; from any directory" autocomplete="off"></label>
+      <label class="row for-task"><input type="checkbox" name="fork"> Fork the resumed session, so the original stays as it is</label>
       <div class="agentpick" id="dlgagent"></div>
       <p id="err" class="err"></p>
       <menu><button value="cancel" formnovalidate class="ghost">Cancel</button><button value="ok" class="primary">Create</button></menu>

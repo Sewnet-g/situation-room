@@ -14,6 +14,7 @@ Object.assign(hooks, {
   badge: inSpace,
   pi: () => !spaceDef()?.login,
   login: (t) => !!config.spaces?.[t.space]?.login,
+  allowMain: () => !!spaceDef()?.allowMain,
 });
 
 function applySpace(switched) {

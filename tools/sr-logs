@@ -1,0 +1,70 @@
+#!/usr/bin/env node
+// Read-only log search through Kibana's console proxy. Credentials come from the environment, never from arguments.
+// Usage: sr-logs [--namespace ns] [--container c] [--grep text] [--since 1h|30m|2d] [--from ISO --to ISO] [--max N] [--all-levels] [--index pattern]
+const args = process.argv.slice(2);
+const opt = (k, d) => { const i = args.indexOf(`--${k}`); return i < 0 ? d : args[i + 1]; };
+const has = (k) => args.includes(`--${k}`);
+if (has('help') || has('h')) {
+  console.log(`sr-logs: search error logs in Kibana/Elasticsearch (read-only)
+
+  --namespace <ns>     Kubernetes namespace (default: $SR_LOGS_NAMESPACE)
+  --container <name>   Kubernetes container name
+  --grep <text>        phrase that must appear in the message (repeatable)
+  --since <dur>        look back this far: 30m, 2h, 3d (default 1h)
+  --from <ISO> --to <ISO>   exact window instead of --since
+  --max <n>            max entries, newest first (default 100)
+  --warn               include warnings as well as errors
+  --all-levels         include every line (default: errors only, by the log's level field)
+  --index <pattern>    index pattern (default: $SR_LOGS_INDEX or filebeat-*)
+  --json               raw JSON hits instead of one line per entry
+
+Needs SR_LOGS_URL (Kibana base URL) and SR_LOGS_API_KEY in the environment.`);
+  process.exit(0);
+}
+const base = (process.env.SR_LOGS_URL || '').replace(/\/$/, '');
+const key = process.env.SR_LOGS_API_KEY || '';
+if (!base || !key) { console.error('sr-logs: SR_LOGS_URL and SR_LOGS_API_KEY are not set. Add them to the debug section of config.json / .env.'); process.exit(2); }
+
+const dur = (s) => { const m = /^(\d+)([mhd])$/.exec(s || ''); return m ? Number(m[1]) * { m: 6e4, h: 36e5, d: 864e5 }[m[2]] : null; };
+const now = Date.now();
+const range = opt('from') ? { gte: opt('from'), lte: opt('to') || new Date(now).toISOString() }
+  : { gte: new Date(now - (dur(opt('since', '1h')) || 36e5)).toISOString(), lte: new Date(now).toISOString() };
+const ns = opt('namespace', process.env.SR_LOGS_NAMESPACE || '');
+const must = [{ range: { '@timestamp': range } }];
+if (ns) must.push({ match_phrase: { 'kubernetes.namespace': ns } });
+if (opt('container')) must.push({ match_phrase: { 'kubernetes.container.name': opt('container') } });
+args.forEach((a, i) => { if (a === '--grep' && args[i + 1]) must.push({ match_phrase: { message: args[i + 1] } }); });
+// A structured level wins; plain-text lines with no level count only if they look like a failure.
+const LEVELS = ['error', 'ERROR', 'Error', 'fatal', 'FATAL', 'critical', 'CRITICAL', 'panic', 'PANIC'].concat(has('warn') ? ['warn', 'WARN', 'warning', 'WARNING'] : []);
+const errorish = LEVELS.flatMap((l) => [{ match_phrase: { level: l } }, { match_phrase: { 'log.level': l } }])
+  .concat([{ bool: { must_not: [{ exists: { field: 'level' } }, { exists: { field: 'log.level' } }],
+    should: ['Traceback', 'Exception', 'panic:', 'FATAL', 'Error:'].map((w) => ({ match_phrase: { message: w } })), minimum_should_match: 1 } }]);
+const body = {
+  size: Number(opt('max', 100)),
+  sort: [{ '@timestamp': { order: 'desc' } }],
+  query: { bool: { must, ...(has('all-levels') ? {} : { should: errorish, minimum_should_match: 1 }) } },
+};
+// Fields filebeat adds to every line; whatever else a structured log carries is printed after the message.
+const NOISE = new Set(['@timestamp', 'message', 'level', 'log', 'input', 'ecs', 'process', 'stream', 'agent', 'host', 'kubernetes', 'tags', '@version', 'container', 'team', 'timestamp', 'span', 'name', 'context', 'fields']);
+const flat = (o, p = '') => Object.entries(o || {}).flatMap(([k, v]) => (v && typeof v === 'object' && !Array.isArray(v) ? flat(v, `${p}${k}.`) : [[`${p}${k}`, v]]));
+const index = opt('index', process.env.SR_LOGS_INDEX || 'filebeat-*');
+const url = `${base}/api/console/proxy?path=${encodeURIComponent(`/${index}/_search`)}&method=GET`;
+
+(async () => {
+  let r;
+  try {
+    r = await fetch(url, { method: 'POST', headers: { Authorization: `ApiKey ${key}`, 'kbn-xsrf': 'true', 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(30_000) });
+  } catch (e) { console.error(`sr-logs: cannot reach ${base} (${e.cause?.code || e.message}). VPN?`); process.exit(3); }
+  const text = await r.text();
+  if (!r.ok) { console.error(`sr-logs: HTTP ${r.status}: ${text.slice(0, 300)}`); process.exit(4); }
+  const hits = JSON.parse(text).hits?.hits || [];
+  if (has('json')) { console.log(JSON.stringify(hits.map((h) => h._source), null, 2)); return; }
+  if (!hits.length) { console.log(`No ${has('all-levels') ? '' : 'error '}logs in ${range.gte} .. ${range.lte}${ns ? ` (namespace ${ns})` : ''}.`); return; }
+  for (const { _source: s } of hits) {
+    const k = s.kubernetes || {};
+    const lvl = s.log?.level || s.level || '?';
+    const extra = flat(Object.fromEntries(Object.entries(s).filter(([f]) => !NOISE.has(f))))
+      .map(([f, v]) => `${f}=${typeof v === 'string' ? v.slice(0, 300) : JSON.stringify(v)}`).join(' ');
+    console.log(`[${s['@timestamp']}] [${lvl}] [${k.container?.name || '?'}] ${String(s.message || '').trim()}${extra ? `  {${extra}}` : ''}`);
+  }
+})();

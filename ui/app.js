@@ -2,7 +2,7 @@ const API = `http://127.0.0.1:${new URLSearchParams(location.search).get('port')
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const LABEL = { idle: '', working: 'Working', waiting: 'Needs you', done: 'Done', stopped: 'Stopped' };
-const KIND = { task: 'Task', review: 'Review', address: 'Feedback', jira: 'Ticket' };
+const KIND = { task: 'Task', review: 'Review', address: 'Feedback', jira: 'Ticket', debug: 'Debugger' };
 const EVL = { COMMENT: 'Comment', APPROVE: 'Approve', REQUEST_CHANGES: 'Request changes' };
 
 const store = {
@@ -31,7 +31,7 @@ const hasFb = (t) => kindOf(t) === 'address' || !!t?.fb;
 const prOf = (t) => t?.fb?.pr || t?.pr;
 const prKey = (t) => prOf(t) && `${prOf(t).slug.toLowerCase()}#${prOf(t).number}`;
 // Spaces (spaces.js) narrow which tasks are visible and how they notify.
-const hooks = { visible: (t) => true, notify: (t, title, body) => [title, body], newTask: () => ({}), badge: (t) => true, work: () => true, roots: () => config.roots, pi: () => true, login: (t) => false };
+const hooks = { visible: (t) => true, notify: (t, title, body) => [title, body], newTask: () => ({}), badge: (t) => true, work: () => true, roots: () => config.roots, pi: () => true, login: (t) => false, allowMain: () => false };
 const shown = () => tasks.filter((t) => hooks.visible(t));
 const cur = () => tasks.find((x) => x.id === current);
 const tilde = (p) => String(p || '').replace(/^\/Users\/[^/]+/, '~');
@@ -46,6 +46,7 @@ const ICON = {
   address: svg('<path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h8A1.5 1.5 0 0 1 13.5 4v5a1.5 1.5 0 0 1-1.5 1.5H7.2L4.5 13v-2.5A1.5 1.5 0 0 1 2.5 9z"/>'),
   jira: svg('<path d="M2.5 5.5V4a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v1.5a1.5 1.5 0 0 0 0 3V12a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1V8.5a1.5 1.5 0 0 0 0-3zM9.5 3v10"/>'),
   pin: svg('<path d="M8 2l1.8 3.7 4 .6-2.9 2.8.7 4L8 11.2l-3.6 1.9.7-4L2.2 6.3l4-.6z"/>'),
+  debug: svg('<ellipse cx="8" cy="9" rx="3.2" ry="4"/><path d="M8 5V3.5M6 4 5 2.5M10 4l1-1.5M4.8 8H2.5M13.5 8h-2.3M4.9 11 3 12.5M11.1 11l1.9 1.5M8 6v6"/>'),
   ship: svg('<path d="M8 13.5V3M4 6.5 8 2.5l4 4M3 13.5h10"/>'),
   branch: svg('<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5.5" r="1.5"/><path d="M4.5 5v6M11.5 7c0 2.5-2 3-5 3.5"/>'),
   commit: svg('<circle cx="8" cy="8" r="2.5"/><path d="M1.5 8h4M10.5 8h4"/>'),
@@ -141,20 +142,48 @@ function groups() {
   const q = ($('#q')?.value || '').trim().toLowerCase();
   for (const t of shown()) {
     if (q && !`${t.name} ${t.repo} ${t.label || ''} ${t.branch || ''}`.toLowerCase().includes(q)) continue;
-    const k = t.pinned ? '★' : t.repo;
+    // Pinned first, then debuggers, then one group per repo.
+    const k = kindOf(t) === 'debug' ? '⚑' : t.pinned ? '★' : t.repo;
     if (!g.has(k)) g.set(k, []);
     g.get(k).push(t);
   }
-  return [...g.entries()].sort(([a], [b]) => (a === '★' ? -1 : b === '★' ? 1 : a.localeCompare(b)));
+  if (hooks.work() && !q && !g.has('⚑')) g.set('⚑', []);
+  const rank = (k) => (k === '★' ? 0 : k === '⚑' ? 1 : 2);
+  return [...g.entries()].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
 }
-const ordered = () => groups().flatMap(([, ts]) => ts);
+// Collapsed groups are remembered per viewer; their tasks drop out of ⌘1–9 and ⌘↑/↓ too.
+const collapsed = new Set((() => { try { return JSON.parse(store.get('collapsed', '[]')); } catch { return []; } })());
+const groupLabel = (k) => (k === '★' ? 'Pinned' : k === '⚑' ? 'Debug' : k);
+function toggleGroup(k) {
+  collapsed.has(k) ? collapsed.delete(k) : collapsed.add(k);
+  store.set('collapsed', JSON.stringify([...collapsed]));
+  renderSidebar();
+}
+const ordered = () => groups().flatMap(([k, ts]) => (collapsed.has(k) && !($('#q')?.value || '').trim() ? [] : ts));
 
 function renderSidebar() {
   const box = $('#tasks');
   const order = ordered();
   box.innerHTML = '';
   for (const [name, ts] of groups()) {
-    box.insertAdjacentHTML('beforeend', `<div class="group"><span>${name === '★' ? 'Pinned' : esc(name)}</span><em>${ts.length}</em></div>`);
+    // A filter shows every match, so it opens collapsed groups for as long as it is typed.
+    const shut = collapsed.has(name) && !($('#q')?.value || '').trim();
+    const need = ts.filter((t) => t.status === 'waiting' || t.status === 'done').length;
+    const head = document.createElement('button');
+    head.className = 'group' + (shut ? ' shut' : '');
+    head.title = shut ? 'Show tasks' : 'Hide tasks';
+    head.innerHTML = `<span><i class="chev"></i>${esc(groupLabel(name))}</span><em>${shut && need ? `<b>${need}</b> · ` : ''}${ts.length}</em>`;
+    head.onclick = () => toggleGroup(name);
+    if (name === '⚑') {
+      const add = document.createElement('span');
+      add.className = 'gadd';
+      add.title = 'New debug task';
+      add.textContent = '+';
+      add.onclick = (e) => { e.stopPropagation(); newTaskType = 'debug'; newTask(); };
+      head.querySelector('em').before(add);
+    }
+    box.appendChild(head);
+    if (shut) continue;
     for (const t of ts) {
       const i = order.indexOf(t);
       const k = kindOf(t);
@@ -162,7 +191,7 @@ function renderSidebar() {
       el.dataset.id = t.id;
       el.className = `task st-${t.status}` + (t.id === current ? ' active' : '') + (t.harness === 'pi' ? ' h-pi' : '');
       const sub = LABEL[t.status] ? `<b>${LABEL[t.status]}</b>${t.updatedAt ? ` · ${ago(t.updatedAt)}` : ''}` : esc(t.label || KIND[k]);
-      el.innerHTML = `<span class="ico k-${k}">${t.pinned ? ICON.pin : ICON[k]}<i class="dot ${t.status}"></i>${t.harness === 'pi' ? '<i class="pib" title="Pi">π</i>' : ''}</span>
+      el.innerHTML = `<span class="ico k-${k}">${(t.pinned && k !== 'debug' ? ICON.pin : ICON[k])}<i class="dot ${t.status}"></i>${t.harness === 'pi' ? '<i class="pib" title="Pi">π</i>' : ''}</span>
         <span class="tx"><span class="name">${esc(t.name)}</span><span class="sub">${sub}</span></span>
         ${i < 9 ? `<kbd>⌘${i + 1}</kbd>` : ''}`;
       el.onclick = () => select(t.id);
@@ -183,7 +212,7 @@ function renderBar() {
   $('#work').hidden = !t;
   if (!t) return;
   const k = kindOf(t);
-  $('#title').innerHTML = `<span class="ico k-${k}">${t.pinned ? ICON.pin : ICON[k]}${t.harness === 'pi' ? '<i class="pib">π</i>' : ''}</span>
+  $('#title').innerHTML = `<span class="ico k-${k}">${(t.pinned && k !== 'debug' ? ICON.pin : ICON[k])}${t.harness === 'pi' ? '<i class="pib">π</i>' : ''}</span>
     <div><b>${esc(t.name)}</b><small>${esc(t.label || t.branch || tilde(t.cwd))}${t.harness === 'pi' || t.model ? ` · ${t.harness === 'pi' ? 'Pi' : 'Claude'}${t.model ? ` ${esc(modelLabel(t.model))}` : ''}` : ''}</small></div>`;
   for (const b of $$('#tabs button')) b.classList.toggle('on', b.dataset.tab === tab);
   $('#remove').hidden = t.id === 'builder';
@@ -366,6 +395,8 @@ function startSheet({ title, sub, repos, repo, ok = 'Start task' }) {
   });
 }
 
+// Set before newTask() to open the dialog on a type, e.g. from the Debug section's +.
+let newTaskType = null;
 async function newTask() {
   const repos = await api(`/repos${hooks.newTask().space ? `?space=${hooks.newTask().space}` : ''}`);
   // Root folders are offered too, for tasks that span several repos.
@@ -373,6 +404,24 @@ async function newTask() {
   $('#err').textContent = '';
   $('#form').reset();
   const agent = agentPicker($('#dlgagent'));
+  const f0 = $('#form');
+  $('#dlgtype').hidden = !hooks.work();
+  const setType = (type) => {
+    const dbg = type === 'debug';
+    f0.dataset.type = type;
+    for (const b of $$('#dlgtype button')) b.classList.toggle('on', b.dataset.type === type);
+    for (const el of $$('.for-debug', f0)) el.hidden = !dbg;
+    for (const el of $$('.for-task', f0)) el.hidden = dbg;
+    f0.report.required = dbg;
+    f0.name.placeholder = dbg ? 'Worker fails to start' : 'Fix flaky login test';
+  };
+  for (const b of $$('#dlgtype button')) b.onclick = () => setType(b.dataset.type);
+  // Only a space that allows it offers working on main; the daemon enforces the same rule.
+  $('.onmain-opt', f0).hidden = !hooks.allowMain();
+  f0.onmain.onchange = () => { f0.worktree.checked = false; f0.worktree.disabled = f0.onmain.checked; };
+  f0.worktree.disabled = false;
+  setType(newTaskType || 'task');
+  newTaskType = null;
   $('#dlgbrowse').hidden = !window.sr?.pickFolder;
   $('#dlgbrowse').onclick = async () => {
     const p = await window.sr.pickFolder((hooks.roots() || [])[0]);
@@ -382,13 +431,15 @@ async function newTask() {
   $('#dlg').onclose = async () => {
     if ($('#dlg').returnValue !== 'ok') return;
     const f = new FormData($('#form'));
+    const dbg = $('#form').dataset.type === 'debug';
     const input = f.get('repo').trim();
     const repoPath = repos.find((r) => r.name === input)?.path || (/^[~/]/.test(input) || /^[\w.-]+\/[\w.-]+$/.test(input) ? input : null);
     if (!repoPath) { $('#err').textContent = 'Unknown repo. Pick one, give owner/name to clone, or an absolute path.'; return $('#dlg').showModal(); }
     try {
       const t = await api('/tasks', {
         method: 'POST',
-        body: { name: f.get('name'), repoPath, worktree: f.get('worktree') === 'on', resumeId: f.get('resume').trim() || undefined, fork: f.get('fork') === 'on' || undefined, ...agent(), ...hooks.newTask() },
+        body: dbg ? { name: f.get('name'), repoPath, debug: true, report: f.get('report'), ...agent() }
+          : { name: f.get('name'), repoPath, worktree: f.get('worktree') === 'on', onMain: (hooks.allowMain() && f.get('onmain') === 'on') || undefined, resumeId: f.get('resume').trim() || undefined, fork: f.get('fork') === 'on' || undefined, ...agent(), ...hooks.newTask() },
       });
       tab = 'claude';
       select(t.id);

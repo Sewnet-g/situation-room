@@ -1,24 +1,49 @@
 {
-  "roots": ["~/code"],
+  "roots": [
+    "~/code"
+  ],
   "org": "your-github-org",
-  "prRepos": ["your-github-org/some-repo"],
-
+  "prRepos": [
+    "your-github-org/some-repo"
+  ],
   "spaces": {
-    "personal": { "label": "Personal", "roots": ["~/personal"], "claudeConfigDir": "~/.claude-personal" }
+    "personal": {
+      "label": "Personal",
+      "roots": [
+        "~/personal"
+      ],
+      "claudeConfigDir": "~/.claude-personal",
+      "allowMain": true
+    }
   },
-
-  "pi": { "mode": "native", "model": "anthropic/claude-sonnet-5" },
-
+  "pi": {
+    "mode": "native",
+    "model": "anthropic/claude-sonnet-5"
+  },
   "gateway": {
     "url": "https://llm-gateway.example.com",
     "keyFrom": "claude-settings",
     "models": "gateway-models.json"
   },
-
   "jira": {
     "base": "https://your-site.atlassian.net",
     "defaultProject": "ABC",
-    "repos": { "ABC": "some-repo" },
-    "team": ["ABC"]
+    "repos": {
+      "ABC": "some-repo"
+    },
+    "team": [
+      "ABC"
+    ]
+  },
+  "logs": {
+    "url": "https://kibana.example.com"
+  },
+  "debug": {
+    "my-service": {
+      "name": "Debug my-service",
+      "repo": "my-service",
+      "namespace": "my-namespace",
+      "notes": "docs/debugging.md"
+    }
   }
 }

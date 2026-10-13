@@ -97,6 +97,12 @@ if (!task('builder')) {
 }
 // A repo with no commits yet has no HEAD to diff or ship against, so it counts as plain folder.
 const isGit = (cwd) => { try { return execFileSync('git', ['-C', cwd, 'rev-parse', '--verify', 'HEAD'], { stdio: 'ignore' }), true; } catch { return false; } };
+// Optional per-repo debug settings (namespace, notes, index), matched by repo folder name or path.
+function debugSettings(repoPath) {
+  const name = path.basename(repoPath || '');
+  return Object.values(config.debug || {}).find((d) => d.repo && (d.repo === name || expand(d.repo) === repoPath)) || {};
+}
+
 // Claude keys transcripts by cwd, so a session that changes directory needs its transcript copied over.
 // The Claude config dir a task runs under; an add-on may give some tasks their own.
 const claudeDir = (t) => loginDir(t) || path.join(os.homedir(), '.claude');
@@ -216,11 +222,43 @@ function piArgs(t, env) {
   const skills = [path.join(os.homedir(), '.claude/skills'), path.join(t.cwd, '.claude/skills')].filter((d) => fs.existsSync(d));
   const ext = [...(gw ? ['gateway.js'] : []), 'situation-room.js'].map((f) => `-e '${path.join(__dirname, 'pi', f)}'`);
   return [`'${path.join(__dirname, 'node_modules/.bin/pi')}'`, sess, `--session-dir '${PI_SESSIONS}'`, model ? '--model "$SR_MODEL"' : '',
-    t.effort ? '--thinking "$SR_EFFORT"' : '', ...ext, ...skills.map((d) => `--skill '${d}'`), '-n "$SR_NAME"'].filter(Boolean).join(' ');
+    t.effort ? '--thinking "$SR_EFFORT"' : '', ...ext, ...skills.map((d) => `--skill '${d}'`), '-n "$SR_NAME"',
+    env.SR_PROMPT_FILE ? '--append-system-prompt "$SR_PROMPT_FILE"' : ''].filter(Boolean).join(' ');
 }
 
 // Gateway variables must be absent for a login dir, not blank: blank ones break the login.
 const claudeEnv = (t) => (loginDir(t) ? { CLAUDE_CONFIG_DIR: loginDir(t), ANTHROPIC_BASE_URL: null, ANTHROPIC_AUTH_TOKEN: null, ANTHROPIC_MODEL: null } : {});
+
+// The guide is prompts/debug.md plus the repo's notes from config.debug (a path relative to the repo, or absolute).
+function debugPrompt(t) {
+  const d = debugSettings(t.repoPath);
+  let text = fs.readFileSync(path.join(__dirname, 'prompts', 'debug.md'), 'utf8');
+  const notes = d.notes && expand(path.isAbsolute(d.notes.replace(/^~/, '/')) ? d.notes : path.join(t.cwd, d.notes));
+  if (notes && fs.existsSync(notes)) text += `\n\n# About this project\n\n${fs.readFileSync(notes, 'utf8')}`;
+  if (d.namespace) text += `\n\nLogs: this project runs in Kubernetes namespace \`${d.namespace}\`; sr-logs uses it by default.`;
+  const f = path.join(HOME, 'prompts', `${t.id}.md`);
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  fs.writeFileSync(f, text);
+  return f;
+}
+// Log credentials live in .env beside the app (SR_LOGS_URL, SR_LOGS_API_KEY); the tools folder goes on PATH.
+function debugEnv(t) {
+  if (kindOf(t) !== 'debug') return {};
+  const env = {};
+  try {
+    for (const l of fs.readFileSync(path.join(__dirname, '.env'), 'utf8').split('\n')) {
+      const m = l.match(/^(SR_LOGS_[A-Z_]+)=["']?(.*?)["']?\s*$/);
+      if (m) env[m[1]] = m[2];
+    }
+  } catch {}
+  const d = debugSettings(t.repoPath);
+  if (d.namespace) env.SR_LOGS_NAMESPACE = d.namespace;
+  if (d.index) env.SR_LOGS_INDEX = d.index;
+  if (config.logs?.url && !env.SR_LOGS_URL) env.SR_LOGS_URL = config.logs.url;
+  env.PATH = `${path.join(__dirname, 'tools')}:${process.env.PATH}`;
+  env.SR_PROMPT_FILE = debugPrompt(t);
+  return env;
+}
 // Gateway ids map to Anthropic's own names for a login dir.
 const claudeModelId = (t) => (loginDir(t) && modelOf(t.model)?.base) || t.model;
 function cleanEnv(extra) {
@@ -237,7 +275,7 @@ function spawn(t, kind, cols = 120, rows = 40) {
   const key = `${t.id}:${kind}`;
   if (procs.has(key)) return procs.get(key);
   const first = !t.started && t.prompt ? t.prompt : t.pending || '';
-  const env = cleanEnv({ SR_TASK: t.id, SR_NAME: t.name, SR_PROMPT: first, SR_ALLOW: allowFor(t), ...claudeEnv(t) });
+  const env = cleanEnv({ SR_TASK: t.id, SR_NAME: t.name, SR_PROMPT: first, SR_ALLOW: allowFor(t), ...claudeEnv(t), ...debugEnv(t) });
   if (t.pending) { delete t.pending; save(); }
   let file, args;
   if (kind === 'claude' && t.harness === 'pi') {
@@ -254,6 +292,7 @@ function spawn(t, kind, cols = 120, rows = 40) {
     // Gateways cap context at 200k without the [1m] suffix; Anthropic's own models need none.
     if (modelOf(t.model)) { env.SR_MODEL = claudeModelId(t) + (gatewayOn() && !loginDir(t) && modelOf(t.model).ctx >= 1e6 ? '[1m]' : ''); sess.push('--model "$SR_MODEL"'); }
     if (t.effort) { env.SR_EFFORT = t.effort; sess.push('--effort "$SR_EFFORT"'); }
+    if (env.SR_PROMPT_FILE) sess.push('--append-system-prompt "$(cat "$SR_PROMPT_FILE")"');
     // Kickoff prompt on first launch, or a queued follow-up on relaunch.
     const prompt = first ? ' -- "$SR_PROMPT"' : '';
     file = process.env.SHELL || '/bin/zsh';
@@ -301,6 +340,14 @@ function spacePath(input, sp) {
   const p = /^[~/]/.test(input) ? expand(input) : listRepos(sp.roots).find((r) => r.name === input)?.path || path.join(sp.roots[0] || os.homedir(), input);
   if (!fs.existsSync(p)) throw new Error(`no such directory: ${p}`);
   return p;
+}
+// The main repo a linked worktree belongs to, or null for a main checkout or a non-git folder.
+function mainRepoOf(dir) {
+  try {
+    const own = git(dir, 'rev-parse', '--path-format=absolute', '--git-dir');
+    const common = git(dir, 'rev-parse', '--path-format=absolute', '--git-common-dir');
+    return own !== common ? path.dirname(common) : null;
+  } catch { return null; }
 }
 // Accepts a path, a repo name under config.roots, or owner/name; clones with gh when missing.
 function ensureRepo(input) {
@@ -401,17 +448,46 @@ function resumeFields(src, fork, harness, cwd, t) {
 const kickoff = (t) => { if (t.started && t.prompt) t.pending = t.prompt; return t; };
 
 // New work branches off fresh origin/main in the repo's own checkout; a worktree beside it when asked, or when the checkout is dirty or in use.
-async function createTask({ name, repoPath, worktree, resumeId, fork, extra, space, ...choice }) {
+async function createTask({ name, repoPath, worktree, resumeId, fork, extra, space, debug, report, onMain, ...choice }) {
   const scope = config.spaces?.[space] ? { space } : {};
+  if (onMain && !config.spaces?.[space]?.allowMain) throw new Error('Working on main is only allowed in a space with allowMain.');
+  if (onMain && (debug || extra?.kind)) throw new Error('Working on main is only for plain tasks.');
+  // A debug task works on any repo; it always gets a fresh worktree off the default branch.
+  if (debug) {
+    worktree = true;
+    resumeId = undefined;
+    extra = { ...extra, kind: 'debug', debug: true,
+      prompt: `${String(report || '').trim() || 'Wait for the report.'}\n\nThis is a fresh worktree off origin/main with no installed dependencies.` };
+  }
   const agent = agentOf(choice, scope);
   const src = sessionSource(resumeId, agent.harness, fork, scope);
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'task';
   const id = `${slug}-${crypto.randomBytes(2).toString('hex')}`;
   repoPath = spaceOf(scope) ? spacePath(repoPath, spaceOf(scope)) : ensureRepo(repoPath);
+  if (debug) extra.label = `Debug · ${path.basename(repoPath)}`;
   let cwd = repoPath;
   let branch = null;
+  // A worktree picked as the folder is used as it is, on its branch; its main repo is recorded as repoPath.
+  const linked = !debug && extra?.kind !== 'jira' && mainRepoOf(repoPath);
+  if (linked) {
+    cwd = repoPath;
+    repoPath = linked;
+    try { branch = git(cwd, 'branch', '--show-current') || null; } catch {}
+  }
+  // On main: the repo's own checkout, switched to the default branch and fast-forwarded; no new branch.
+  if (onMain && !linked) {
+    if (!isGit(repoPath)) throw new Error(`not a git repo: ${repoPath}`);
+    if (git(repoPath, 'status', '--porcelain')) throw new Error(`${path.basename(repoPath)} has uncommitted changes; commit or stash them first.`);
+    if (state.tasks.some((x) => x.cwd === repoPath && procs.has(`${x.id}:claude`))) throw new Error(`another task is running in ${path.basename(repoPath)}.`);
+    const base = baseRef(repoPath).replace(/^origin\//, '');
+    try { git(repoPath, 'fetch', 'origin', base); } catch {}
+    git(repoPath, 'switch', base);
+    try { git(repoPath, 'merge', '--ff-only', `origin/${base}`); } catch {}
+    branch = base;
+    extra = { ...extra, onMain: true };
+  }
   // Resuming into a plain task keeps the checkout as it is; a Jira task still gets its branch.
-  if ((!src || extra?.kind === 'jira') && isGit(repoPath)) {
+  if (!onMain && !linked && (!src || extra?.kind === 'jira') && isGit(repoPath)) {
     let base = 'origin/main';
     try { base = git(repoPath, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'); } catch {}
     try { git(repoPath, 'fetch', 'origin', base.replace(/^origin\//, '')); } catch {}
@@ -1101,7 +1177,7 @@ function shipState(t) {
   const pr = slug && !onBase ? branchPr(slug, branch) : null;
   const draft = readJson(shipFile(t), { commits: [], branch: '', pr: { title: '', body: '' } });
   const hint = hasFeedback(t) ? readJson(fbFile(t), {}).commitMessage || '' : '';
-  return { branch, base, baseName, onBase, upstream, slug, files: changedFiles(cwd), commits, pr, jiraKey: jiraKeyOf(t, branch), draft, hint };
+  return { branch, base, baseName, onBase, upstream, slug, files: changedFiles(cwd), commits, pr: t.onMain ? null : pr, jiraKey: jiraKeyOf(t, branch), draft, hint, onMain: !!(t.onMain && onBase && mainAllowed(t)) };
 }
 
 function shipDiff(cwd, files) {
@@ -1121,7 +1197,7 @@ async function shipPlan(t, note) {
   let history = [];
   try { history = git(t.cwd, 'log', '--format=%s', '--no-merges', '-30', s.base).split('\n'); } catch {}
   const prev = s.draft.commits?.length ? `\nThe current plan, which the note may be refining:\n${JSON.stringify({ commits: s.draft.commits, branch: s.draft.branch, pr: s.draft.pr })}\n` : '';
-  const out = await claudeJson(`Plan how to commit and open a pull request for these changes in the ${path.basename(t.repoPath || t.cwd)} repo.
+  const out = await claudeJson(`Plan how to commit ${s.onMain ? `these changes straight to ${s.baseName} (no branch, no pull request)` : 'and open a pull request for these changes'} in the ${path.basename(t.repoPath || t.cwd)} repo.
 
 Task: ${t.name}
 Jira ticket: ${s.jiraKey || 'none'}
@@ -1169,6 +1245,8 @@ function fullDiff(cwd) {
 }
 
 const sq = (x) => `'${String(x).replace(/'/g, `'\\''`)}'`;
+// A push straight to the default branch needs the task's space to allow it, checked at ship time too.
+const mainAllowed = (t) => !!(t.space && config.spaces?.[t.space]?.allowMain);
 
 // Builds the one-line command the user runs in Shell; Situation Room never runs it.
 function shipCommand(t, d) {
@@ -1177,6 +1255,18 @@ function shipCommand(t, d) {
   const byPath = new Map(s.files.map((f) => [f.path, f]));
   const steps = [];
   const branch = String(d.branch || '').trim();
+  if (s.onMain) {
+    for (const c of d.commits || []) {
+      const fs_ = (c.files || []).map((p) => byPath.get(p)).filter(Boolean);
+      if (!fs_.length || !c.message?.trim()) continue;
+      const paths = fs_.flatMap((f) => (f.from ? [f.from, f.path] : [f.path])).map(sq).join(' ');
+      steps.push(`git add -A -- ${paths} && git commit -q -m ${sq(c.message.trim().split('\n')[0])} -- ${paths}`);
+    }
+    if (!steps.length && !s.commits.length) throw new Error('Nothing to commit or push.');
+    // Rebase onto the latest so a push to main never needs force.
+    steps.push(`git pull --rebase -q origin ${sq(s.baseName)}`, `git push origin HEAD:${sq(s.baseName)}`);
+    return { steps, cmd: steps.join(' && '), onMain: true };
+  }
   if (branch && branch !== s.branch) {
     if (!/^[\w./-]+$/.test(branch)) throw new Error(`invalid branch name: ${branch}`);
     steps.push(s.onBase ? `git switch -c ${sq(branch)}` : `git branch -m ${sq(branch)}`);
@@ -1289,6 +1379,8 @@ function sweepWorktrees() {
     // Only worktrees Situation Room made: the old home, or a <repo>-<branch> sibling.
     for (const cwd of list.filter((c) => !owned.has(c) && (c.startsWith(legacy + '/') || path.basename(c).startsWith(`${r.name}-`)))) {
       if (worktreeRisk(cwd, cwd.includes('/pr-') ? 'review' : '').length) continue;
+      // An agent may have just made it and not written to it yet; leave anything under an hour old.
+      try { if (Date.now() - fs.statSync(cwd).birthtimeMs < 3600_000) continue; } catch { continue; }
       dropWorktree(r.path, cwd);
       console.log(`swept orphan ${cwd}`);
     }
@@ -1406,7 +1498,8 @@ const server = http.createServer(async (req, res) => {
       return json(200, {
         roots: config.roots, prRepos: config.prRepos, gateway: gatewayOn(),
         jira: !!config.jira, jiraBase: config.jira?.base, jiraProject: config.jira?.defaultProject, jiraRepos: config.jira?.repos || {},
-        spaces: Object.fromEntries(Object.entries(config.spaces || {}).map(([k, v]) => [k, { label: v.label || k, roots: v.roots, login: !!v.claudeConfigDir }])),
+        logs: !!(config.logs?.url || fs.existsSync(path.join(__dirname, '.env'))),
+        spaces: Object.fromEntries(Object.entries(config.spaces || {}).map(([k, v]) => [k, { label: v.label || k, roots: v.roots, login: !!v.claudeConfigDir, allowMain: !!v.allowMain }])),
         // Claude Code takes catalog models; Pi takes the gateway catalog or whatever Pi itself can reach.
         models: MODELS.filter((m) => m.claude).map(({ id, label, ctx, cost }) => ({ id, label, ctx, cost, claude: true }))
           .concat(pi.map(({ id, label, ctx, cost }) => ({ id, label, ctx, cost, pi: true }))),
@@ -1446,6 +1539,28 @@ const server = http.createServer(async (req, res) => {
       if (typeof b.name === 'string' && b.name.trim()) t.name = b.name.trim().slice(0, 120);
       if (typeof b.pinned === 'boolean' && t.id !== 'builder') t.pinned = b.pinned;
       if (b.status === 'idle' && ['done', 'stopped', 'waiting'].includes(t.status)) t.status = 'idle';
+      // Turning push-to-main on for an existing task: allowed space, and its checkout already on the default branch.
+      if (b.onMain === true && !t.onMain) {
+        if (!mainAllowed(t)) return json(400, { error: 'this task is not in a space that allows working on main' });
+        if (!t.git) return json(400, { error: 'not a git checkout' });
+        const base = baseRef(t.cwd).replace(/^origin\//, '');
+        if (git(t.cwd, 'branch', '--show-current') !== base) return json(400, { error: `switch the task's checkout to ${base} first` });
+        t.onMain = true;
+        t.branch = base;
+      }
+      if (b.onMain === false) delete t.onMain;
+      // Moving a task to another checkout of its repo: the folder must be a git worktree of the same repo.
+      if (typeof b.cwd === 'string' && b.cwd !== t.cwd) {
+        const cwd = expand(b.cwd);
+        if (procs.has(`${t.id}:claude`) || procs.has(`${t.id}:shell`)) return json(409, { error: 'stop the task first' });
+        let common;
+        try { common = git(cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir'); } catch { return json(400, { error: `not a git checkout: ${cwd}` }); }
+        if (t.repoPath && common !== git(t.repoPath, 'rev-parse', '--path-format=absolute', '--git-common-dir')) return json(400, { error: 'that folder belongs to another repo' });
+        moveSession(t, cwd);
+        t.branch = git(cwd, 'branch', '--show-current') || null;
+        t.worktree = cwd !== t.repoPath;
+        t.git = isGit(cwd);
+      }
       save();
       publish();
       return json(200, t);
