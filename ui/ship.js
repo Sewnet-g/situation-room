@@ -204,7 +204,13 @@ function renderShip() {
         </div>
         ${ship.preview ? `<div class="md prev-md">${md(d.pr.body) || '<p class="dim">Nothing to preview.</p>'}</div>`
           : `<textarea id="sh-pbody" rows="3" placeholder="Two to five lines: what changed and why.">${esc(d.pr.body)}</textarea>`}
+        <div class="prmeta">
+          ${s.labels?.length ? `<label class="prl">Label <select id="sh-label" title="${esc(s.labels.find((l) => l.name === d.pr.label)?.description || 'No label')}">
+            <option value="">No label</option>${s.labels.map((l) => `<option ${l.name === d.pr.label ? 'selected' : ''} title="${esc(l.description || '')}">${esc(l.name)}</option>`).join('')}</select></label>` : ''}
+          <span class="dim">Assigned to you</span>
+        </div>
       </div>`);
+    if ($('#sh-label')) $('#sh-label').onchange = (e) => { d.pr.label = e.target.value; e.target.title = s.labels.find((l) => l.name === d.pr.label)?.description || 'No label'; saveShip(); };
     $('#sh-title').oninput = (e) => { d.pr.title = e.target.value; saveShip(); updateGo(); };
     for (const b of $$('#sh-mode button')) b.onclick = () => { ship.preview = b.dataset.m === 'p'; renderShip(); };
     const pb = $('#sh-pbody');
@@ -388,7 +394,7 @@ async function runShip() {
     if (x.startsWith('git pull --rebase')) return ['branch', `Rebase onto the latest <b>${esc(s.baseName)}</b>`];
     if (x.startsWith('git push') && s.onMain) return ['ship', `Push straight to <b>${esc(s.baseName)}</b> on origin`];
     if (x.startsWith('git push')) return ['ship', `Push to <b>origin</b>`];
-    return ['review', `Open <b>draft</b> PR into <b>${esc(s.baseName)}</b>`];
+    return ['review', `Open <b>draft</b> PR into <b>${esc(s.baseName)}</b>, assigned to you${d.pr.label ? `, labelled <b>${esc(d.pr.label)}</b>` : ''}`];
   };
   const ok = await confirmSheet({
     title: shipAction(s, d) + '?',

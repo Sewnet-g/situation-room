@@ -525,6 +525,18 @@ function localClone(slug) { return listRepos().find((r) => originSlug(r.path) ==
 
 let login;
 function whoami() { return (login ||= gh(['api', 'user', '-q', '.login']).trim()); }
+// A repo's labels, cached for an hour; an empty list when gh can't read them.
+const labelsAt = new Map();
+function repoLabels(slug) {
+  const hit = labelsAt.get(slug);
+  if (hit && Date.now() - hit.at < 3600_000) return hit.list;
+  let list = [];
+  try { list = JSON.parse(gh(['label', 'list', '-R', slug, '--limit', '100', '--json', 'name,description'])); } catch {}
+  labelsAt.set(slug, { at: Date.now(), list });
+  return list;
+}
+// Labels that say what kind of change a PR is; other labels stay out of the picker.
+const kindLabels = (slug) => repoLabels(slug).filter((l) => /^kpi:/i.test(l.name) || /^(bug|enhancement|feature|documentation|dependencies|security)$/i.test(l.name));
 
 function listPrs(slug) {
   const prs = JSON.parse(gh(['pr', 'list', '-R', slug, '--limit', '100', '--json',
@@ -1177,7 +1189,7 @@ function shipState(t) {
   const pr = slug && !onBase ? branchPr(slug, branch) : null;
   const draft = readJson(shipFile(t), { commits: [], branch: '', pr: { title: '', body: '' } });
   const hint = hasFeedback(t) ? readJson(fbFile(t), {}).commitMessage || '' : '';
-  return { branch, base, baseName, onBase, upstream, slug, files: changedFiles(cwd), commits, pr: t.onMain ? null : pr, jiraKey: jiraKeyOf(t, branch), draft, hint, onMain: !!(t.onMain && onBase && mainAllowed(t)) };
+  return { branch, base, baseName, onBase, upstream, slug, labels: slug && !t.onMain ? kindLabels(slug) : [], files: changedFiles(cwd), commits, pr: t.onMain ? null : pr, jiraKey: jiraKeyOf(t, branch), draft, hint, onMain: !!(t.onMain && onBase && mainAllowed(t)) };
 }
 
 function shipDiff(cwd, files) {
@@ -1197,6 +1209,7 @@ async function shipPlan(t, note) {
   let history = [];
   try { history = git(t.cwd, 'log', '--format=%s', '--no-merges', '-30', s.base).split('\n'); } catch {}
   const prev = s.draft.commits?.length ? `\nThe current plan, which the note may be refining:\n${JSON.stringify({ commits: s.draft.commits, branch: s.draft.branch, pr: s.draft.pr })}\n` : '';
+  const kinds = s.slug && !s.onMain ? kindLabels(s.slug) : [];
   const out = await claudeJson(`Plan how to commit ${s.onMain ? `these changes straight to ${s.baseName} (no branch, no pull request)` : 'and open a pull request for these changes'} in the ${path.basename(t.repoPath || t.cwd)} repo.
 
 Task: ${t.name}
@@ -1214,7 +1227,8 @@ ${s.files.map((f) => `${f.st} ${f.path}`).join('\n')}
 Diff:
 ${shipDiff(t.cwd, s.files)}
 ${prev}${note ? `\nNote from the author: ${note}\n` : ''}
-Answer with only a JSON object {"commits": [{"message": string, "files": [string]}], "branch": string, "pr": {"title": string, "body": string}}.
+${kinds.length ? `Pick the one label that best describes the change, from this repo's labels:\n${kinds.map((l) => `- ${l.name}: ${l.description || ''}`).join('\n')}\n` : ''}
+Answer with only a JSON object {"commits": [{"message": string, "files": [string]}], "branch": string, "pr": {"title": string, "body": string${kinds.length ? ', "label": string' : ''}}}.
 commits: split into several commits only where the changes are clearly separate concerns; otherwise one commit. Order them so each builds on the last.
 Every changed file appears in exactly one commit. Each message is one line, imperative, no body, no trailing period, in the history's style.
 ${s.jiraKey ? `Start each message and the PR title with ${s.jiraKey} the way the history does.` : 'If the history marks commits without a ticket in some way, follow it.'}
@@ -1229,7 +1243,9 @@ pr.title: the main commit's style. pr.body: two to five short lines of markdown 
   })).filter((c) => c.message && c.files.length);
   const left = [...known].filter((f) => !seen.has(f));
   if (left.length) commits.length ? commits.at(-1).files.push(...left) : commits.push({ message: 'Update', files: left });
-  const draft = { commits, branch: String(out.branch || s.branch).trim(), pr: { title: out.pr?.title || commits[0]?.message || '', body: out.pr?.body || '' }, plannedAt: Date.now() };
+  // Only a label the repo really has is kept; a made-up one would fail the PR command.
+  const label = kinds.find((l) => l.name.toLowerCase() === String(out.pr?.label || '').toLowerCase())?.name || '';
+  const draft = { commits, branch: String(out.branch || s.branch).trim(), pr: { title: out.pr?.title || commits[0]?.message || '', body: out.pr?.body || '', label }, plannedAt: Date.now() };
   writeJson(shipFile(t), draft);
   return draft;
 }
@@ -1285,7 +1301,10 @@ function shipCommand(t, d) {
     if (!d.pr?.title?.trim()) throw new Error('The PR needs a title.');
     const bodyFile = path.join(REVIEWS, `${t.id}.prbody.md`);
     fs.writeFileSync(bodyFile, String(d.pr.body || '').trim() + '\n');
-    steps.push(`gh pr create --draft --base ${sq(s.baseName)} --title ${sq(d.pr.title.trim())} --body-file ${sq(bodyFile)}`);
+    const label = String(d.pr.label || '').trim();
+    if (label && s.slug && !repoLabels(s.slug).some((l) => l.name === label)) throw new Error(`${s.slug} has no label "${label}".`);
+    // Assigned to whoever opens it; gh resolves @me to the signed-in account.
+    steps.push(`gh pr create --draft --base ${sq(s.baseName)} --title ${sq(d.pr.title.trim())} --body-file ${sq(bodyFile)} --assignee @me${label ? ` --label ${sq(label)}` : ''}`);
   }
   prAt.clear();
   return { steps, cmd: steps.join(' && ') };

@@ -24,7 +24,7 @@ Config is `~/.situation-room/config.json` (see `config.example.json`); defaults 
 ## Ship
 
 - Drawer tabs: Changes (working-tree diff) and Ship. Ship drafts commits, branch and a draft PR via `claude -p`; the draft lives in `~/.situation-room/reviews/<task>.ship.json`.
-- Ship only types the commands into the task's Shell. The user presses Enter. PRs are always `--draft`.
+- Ship only types the commands into the task's Shell. The user presses Enter. PRs are always `--draft`. They're `--assignee @me`, and the plan picks one label from the repo's kind labels (`KPI:*`, `bug`, `enhancement`, …, read with `gh label list`, cached an hour); an unknown label is rejected before the command is built.
 
 ## PR watch
 
