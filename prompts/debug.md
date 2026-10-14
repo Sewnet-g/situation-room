@@ -24,7 +24,7 @@ You're in a fresh worktree on its own branch, off the latest `origin/main`.
 6. **Stop after the report** and wait for the user's go-ahead before changing anything.
 7. **Fix** on this branch: the smallest change that addresses the cause, following the repo's own conventions (its `CLAUDE.md`, tests, lint). Install dependencies first; nothing is installed yet.
 8. **Verify** with the repo's own tests and build. If the bug is reproducible locally, show it failing before and passing after.
-9. **Ship** from Situation Room's Ship tab: it drafts the commits and a **draft** PR, and the user runs them. Don't commit, push or open a PR yourself. Put the cause and the evidence (log lines, refs) in the PR description draft.
+9. **Ship**: put the cause and the evidence (log lines, refs) in the ship note.
 
 ## Rules
 
