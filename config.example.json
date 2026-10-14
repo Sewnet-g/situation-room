@@ -6,6 +6,7 @@
   "prRepos": [
     "your-github-org/some-repo"
   ],
+  "builderSpace": "personal",
   "spaces": {
     "personal": {
       "label": "Personal",

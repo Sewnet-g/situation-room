@@ -95,6 +95,16 @@ if (!task('builder')) {
   });
   save();
 }
+// config.builderSpace puts the Builder in that space; with allowMain there, it ships straight to main.
+{
+  const b = task('builder');
+  const sp = config.builderSpace && config.spaces?.[config.builderSpace] ? config.builderSpace : null;
+  if ((b.space || null) !== sp) {
+    if (sp) b.space = sp; else delete b.space;
+    if (sp && config.spaces[sp].allowMain) b.onMain = true; else delete b.onMain;
+    save();
+  }
+}
 // A repo with no commits yet has no HEAD to diff or ship against, so it counts as plain folder.
 const isGit = (cwd) => { try { return execFileSync('git', ['-C', cwd, 'rev-parse', '--verify', 'HEAD'], { stdio: 'ignore' }), true; } catch { return false; } };
 // Optional per-repo debug settings (namespace, notes, index), matched by repo folder name or path.

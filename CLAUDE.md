@@ -62,6 +62,7 @@ Config is `~/.situation-room/config.json` (see `config.example.json`); defaults 
 - `config.spaces` defines extra spaces, cycled with ⌘⇧. — each shows only its own tasks; PRs and Jira are work-only.
 - A space with `claudeConfigDir` runs Claude Code with `CLAUDE_CONFIG_DIR` set and no `ANTHROPIC_*` variables (absent, not blank — blank breaks the login), so it uses that dir's own `/login`. No Pi there; gateway model ids map to Anthropic's via `base`.
 - Usage counts those dirs as subscription usage: tokens, no cost.
+- `builderSpace` names the space the Builder lives in (default: work). With `allowMain` there it ships straight to main.
 - `allowMain` on a space allows `onMain` tasks: the repo's own checkout on the default branch (must be clean and free), and a Ship command of commit, `pull --rebase`, `push origin HEAD:<base>` with no PR. `createTask` and `shipState` both check the space, so a work task can't get it even with an edited state file.
 
 Pty replay trims old output, so the daemon tracks input modes (bracketed paste, focus, mouse) and re-sends them on attach. Status comes from Claude Code hooks injected via `--settings`, or the Pi extension, which POST to `/hook/<task>/<event>`.
@@ -72,6 +73,10 @@ Pty replay trims old output, so the daemon tracks input modes (bracketed paste, 
 - `main.js`: the user quits and restarts the app. Sessions survive.
 - `daemon.js`: **restarting it kills every session, including yours.** Sessions resume, but anything mid-flight is lost. Finish your reply, then ask the user to use View → Restart Daemon.
 - Syntax-check before handing over: `node --check daemon.js main.js usage.js pi/*.js ui/*.js`.
+- Test daemon changes on a throwaway daemon, never the user's: `SR_PORT=7791 SR_HOME=/tmp/x node daemon.js`, a temp repo with a bare origin at a `…/github.com/<owner>/<repo>.git` path (that is how the slug is read), and stub `gh`/`claude` on PATH. The pty runs a login shell, which resets PATH, so the real `claude` can still start: check `ps` and kill it.
+- The window is reachable on Chrome DevTools port 9333 (`--remote-debugging-port`) to check UI state with `Runtime.evaluate`. Select the task you test, then put the user's selection back.
+- Never `checkout --force`, `reset --hard` or `clean` a task's checkout: it may be someone's real worktree with uncommitted work.
+- Change tasks through the daemon's API, not `state.json`: the daemon holds state in memory and overwrites hand edits.
 
 ## Rules
 

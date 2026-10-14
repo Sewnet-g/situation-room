@@ -55,6 +55,7 @@ Settings live in `~/.situation-room/config.json`. Copy [`config.example.json`](c
 | `pi` | `mode` and default `model` for Pi. See [Pi](#pi). |
 | `gateway` | An LLM gateway such as LiteLLM. Leave it out to talk to providers directly. |
 | `jira` | Your Jira site. Leave it out and the Jira tab stays hidden. |
+| `builderSpace` | The space the Builder task lives in, such as `personal`. Default: work. |
 | `debug`, `logs` | Projects you can debug, and where their logs are. See [Debug tasks](#debug-tasks). |
 
 Restart the daemon after editing the file.
