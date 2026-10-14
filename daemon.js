@@ -148,7 +148,7 @@ const hookSettings = JSON.stringify({
 const READ_CMDS = ['gh pr view', 'gh pr diff', 'gh pr checks', 'git log', 'git diff', 'git show', 'git status', 'ls', 'wc'];
 function allowFor(t) {
   if (!t.reviewFile) return '';
-  const own = kindOf(t) === 'address' ? [`Edit(/${t.cwd}/**)`, `Write(/${t.cwd}/**)`] : [];
+  const own = kindOf(t) === 'address' || t.contribute ? [`Edit(/${t.cwd}/**)`, `Write(/${t.cwd}/**)`] : [];
   return ['Read', 'Grep', 'Glob', `Write(/${REVIEWS}/**)`, `Edit(/${REVIEWS}/**)`, ...own, ...READ_CMDS.map((c) => `Bash(${c}:*)`)].join(',');
 }
 
@@ -206,7 +206,7 @@ async function refreshPrices() {
 
 function piArgs(t, env) {
   const gw = gatewayOn() ? gateway() : null;
-  const own = kindOf(t) === 'address' ? [t.cwd] : [];
+  const own = kindOf(t) === 'address' || t.contribute ? [t.cwd] : [];
   // Gateway models are registered as provider "gateway"; native ids already carry their provider.
   const model = t.model || config.pi.model || (gw ? MODELS[0].id : '');
   // Native Pi must not pick up a gateway's ANTHROPIC_* from Claude Code's settings and send it to Anthropic.
@@ -604,6 +604,34 @@ Reviews already posted are kept under "history" in the file; do not repeat those
 Do not post anything to GitHub: the draft is reviewed, edited and submitted by a human from Situation Room. \
 The file may be edited while you work, so re-read it before changing it. When done, reply here with a three-line summary.`;
 
+// Puts a review task's worktree on the PR's own branch, tracking origin, so its changes can be pushed to the PR.
+function contributeToPr(t) {
+  if (kindOf(t) !== 'review') throw new Error('only a review task can contribute to a PR');
+  if (t.contribute) return t;
+  const p = JSON.parse(gh(['pr', 'view', String(t.pr.number), '-R', t.pr.slug, '--json', 'headRefName,headRefOid,isCrossRepository,maintainerCanModify,state']));
+  if (p.state !== 'OPEN') throw new Error(`PR #${t.pr.number} is ${p.state.toLowerCase()}`);
+  if (p.isCrossRepository) throw new Error(`PR #${t.pr.number} comes from a fork; push to it from the fork instead`);
+  const branch = p.headRefName;
+  if (git(t.cwd, 'status', '--porcelain')) throw new Error('the review worktree has uncommitted changes');
+  if (worktreeFor(t.repoPath, branch)) throw new Error(`${branch} is already checked out in another folder`);
+  git(t.repoPath, 'fetch', 'origin', `${branch}:refs/remotes/origin/${branch}`);
+  let local = true;
+  try { git(t.repoPath, 'rev-parse', '--verify', `refs/heads/${branch}`); } catch { local = false; }
+  // A stale local copy of the branch would hide the author's latest commits, so it is reset to origin.
+  if (local) git(t.cwd, 'switch', '-C', branch, `origin/${branch}`); else git(t.cwd, 'switch', '--track', '-c', branch, `origin/${branch}`);
+  git(t.cwd, 'branch', `--set-upstream-to=origin/${branch}`);
+  Object.assign(t, { contribute: true, branch, git: true });
+  t.pr.headSha = p.headRefOid;
+  save();
+  publish();
+  // Edit rights are fixed at launch, so the agent resumes its session with the go-ahead queued.
+  t.pending = `You can now edit this checkout: it is on the PR's branch \`${branch}\`. Make the changes asked for, commit nothing, and tell me when they are ready to ship. Keep the review draft as it is unless I ask.`;
+  save();
+  const e = procs.get(`${t.id}:claude`);
+  if (e) { e.pty.onExit(() => setTimeout(() => task(t.id) && spawn(t, 'claude'), 100)); e.pty.kill(); } else spawn(t, 'claude');
+  return t;
+}
+
 function createReviewTask({ slug, number, resumeId, fork, ...choice }) {
   const existing = state.tasks.find((t) => kindOf(t) === 'review' && t.pr.slug === slug && t.pr.number === Number(number));
   if (existing) return existing;
@@ -683,8 +711,12 @@ function refreshHead(t, force) {
   try {
     const sha = gh(['pr', 'view', String(t.pr.number), '-R', t.pr.slug, '--json', 'headRefOid', '-q', '.headRefOid']).trim();
     if (!sha || sha === t.pr.headSha) return;
-    git(t.cwd, 'fetch', 'origin', `pull/${t.pr.number}/head`);
-    try { git(t.cwd, 'checkout', '--detach', 'FETCH_HEAD'); } catch {}
+    // A contributing checkout stays on the PR branch; Ship's rebase picks up the author's commits.
+    if (t.contribute) git(t.cwd, 'fetch', 'origin', `${t.branch}:refs/remotes/origin/${t.branch}`);
+    else {
+      git(t.cwd, 'fetch', 'origin', `pull/${t.pr.number}/head`);
+      try { git(t.cwd, 'checkout', '--detach', 'FETCH_HEAD'); } catch {}
+    }
     t.pr.headSha = sha;
     save();
     publish();
@@ -1283,7 +1315,11 @@ function shipCommand(t, d) {
     steps.push(`git pull --rebase -q origin ${sq(s.baseName)}`, `git push origin HEAD:${sq(s.baseName)}`);
     return { steps, cmd: steps.join(' && '), onMain: true };
   }
-  if (branch && branch !== s.branch) {
+  // Someone else's PR: never rename its branch or open a new PR; rebase onto their latest and push to it.
+  const theirs = t.contribute && kindOf(t) === 'review';
+  if (theirs) {
+    if (s.branch !== t.branch) throw new Error(`expected to be on ${t.branch}, but the checkout is on ${s.branch}`);
+  } else if (branch && branch !== s.branch) {
     if (!/^[\w./-]+$/.test(branch)) throw new Error(`invalid branch name: ${branch}`);
     steps.push(s.onBase ? `git switch -c ${sq(branch)}` : `git branch -m ${sq(branch)}`);
   }
@@ -1294,6 +1330,12 @@ function shipCommand(t, d) {
     steps.push(`git add -A -- ${paths} && git commit -q -m ${sq(c.message.trim().split('\n')[0])} -- ${paths}`);
   }
   const committing = steps.some((x) => x.startsWith('git add'));
+  if (theirs) {
+    if (!committing && !s.commits.length) throw new Error('Nothing to commit or push.');
+    steps.push(`git pull --rebase -q origin ${sq(t.branch)}`, `git push origin HEAD:${sq(t.branch)}`);
+    prAt.clear();
+    return { steps, cmd: steps.join(' && '), theirs: true };
+  }
   if (!committing && !s.commits.length && !s.pr) throw new Error('Nothing to commit or push.');
   if (s.onBase && !(branch && branch !== s.branch)) throw new Error(`On ${s.branch}; set a branch name first.`);
   steps.push('git push -u origin HEAD');
@@ -1333,6 +1375,9 @@ fs.watch(REVIEWS, (_ev, file) => {
 const isWorktree = (t) => !!t.repoPath && t.cwd !== t.repoPath && fs.existsSync(t.cwd);
 
 // What deleting a worktree would lose: uncommitted files, and commits on no remote (review heads are the PR's own).
+// Unpushed commits count unless the worktree is a plain review checkout or its PR is closed.
+const riskKind = (t, closed) => (closed || (kindOf(t) === 'review' && !t.contribute) ? 'review' : t.contribute ? 'contribute' : kindOf(t));
+
 function worktreeRisk(cwd, kind) {
   const risk = [];
   try { const n = git(cwd, 'status', '--porcelain').split('\n').filter(Boolean).length; if (n) risk.push(`${n} uncommitted file${n > 1 ? 's' : ''}`); } catch { return []; }
@@ -1355,7 +1400,7 @@ function removeTask(id, { worktree = true, force = false, closed = false } = {})
   // A worktree another task still works in stays, whatever the caller asked.
   const shared = state.tasks.some((x) => x.id !== id && x.cwd === t.cwd);
   const wt = worktree && !shared && isWorktree(t);
-  const risk = wt ? worktreeRisk(t.cwd, closed ? 'review' : kindOf(t)) : [];
+  const risk = wt ? worktreeRisk(t.cwd, riskKind(t, closed)) : [];
   if (risk.length && !force) return { risk };
   for (const k of ['claude', 'shell']) procs.get(`${id}:${k}`)?.pty.kill();
   // The branch stays; only the worktree folder goes.
@@ -1397,7 +1442,9 @@ function sweepWorktrees() {
     list = blocks.filter((b) => !taken.has(b.match(/^branch (.+)$/m)?.[1])).map((b) => b.match(/^worktree (.+)$/m)?.[1]).filter(Boolean);
     // Only worktrees Situation Room made: the old home, or a <repo>-<branch> sibling.
     for (const cwd of list.filter((c) => !owned.has(c) && (c.startsWith(legacy + '/') || path.basename(c).startsWith(`${r.name}-`)))) {
-      if (worktreeRisk(cwd, cwd.includes('/pr-') ? 'review' : '').length) continue;
+      // A review checkout is detached; one on a branch may hold commits for someone's PR.
+      const detached = blocks.some((b) => b.startsWith(`worktree ${cwd}\n`) && /^detached$/m.test(b));
+      if (worktreeRisk(cwd, cwd.includes('/pr-') && detached ? 'review' : '').length) continue;
       // An agent may have just made it and not written to it yet; leave anything under an hour old.
       try { if (Date.now() - fs.statSync(cwd).birthtimeMs < 3600_000) continue; } catch { continue; }
       dropWorktree(r.path, cwd);
@@ -1546,6 +1593,7 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'GET') { refreshHead(t); return json(200, { pr: t.pr, draft: readReview(t), diff: prDiff(t), login: whoami() }); }
       if (req.method === 'POST' && parts[2] === 'ask') { ask(t, readJsonStr(await body(req)).text); return json(200, {}); }
       if (req.method === 'POST' && parts[2] === 'update') return json(200, reviewUpdate(t, readJsonStr(await body(req))));
+      if (req.method === 'POST' && parts[2] === 'contribute') return json(200, contributeToPr(t));
       if (req.method === 'PUT') { fs.writeFileSync(t.reviewFile, JSON.stringify(readJsonStr(await body(req)), null, 2)); return json(200, {}); }
       if (req.method === 'POST' && parts[2] === 'submit') return json(200, submitReview(t, readJsonStr(await body(req))));
     }
@@ -1591,7 +1639,7 @@ const server = http.createServer(async (req, res) => {
       const t = task(parts[1]);
       const own = !!t && isWorktree(t) && !state.tasks.some((x) => x.id !== t.id && x.cwd === t.cwd);
       const closed = own && (prOf(t) || t.branch) && ['MERGED', 'CLOSED'].includes(prStateOf(t));
-      return json(200, { worktree: own, cwd: t?.cwd, risk: own ? worktreeRisk(t.cwd, closed ? 'review' : kindOf(t)) : [] });
+      return json(200, { worktree: own, cwd: t?.cwd, risk: own ? worktreeRisk(t.cwd, riskKind(t, closed)) : [] });
     }
     json(404, { error: 'not found' });
   } catch (e) {

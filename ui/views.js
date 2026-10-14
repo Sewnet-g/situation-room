@@ -651,6 +651,7 @@ function taskMenuItems(t) {
       run: () => patchTask(t, { onMain: !t.onMain }).then((r) => r?.id && toast(r.onMain ? `Ship now pushes straight to <b>${esc(r.branch)}</b>.` : 'Ship is back to branch and draft PR.', 'ok')) },
     '-',
     { label: 'Open pull request ↗', hide: !pr, run: () => window.sr?.open(pr.url) },
+    { label: 'Contribute to this PR…', hide: kindOf(t) !== 'review' || !!t.contribute, run: () => contribute(t) },
     { label: 'Open Jira ticket ↗', hide: !t.jira, run: () => window.sr?.open(t.jira.url) },
     { label: 'Start a task with this session', hint: 'fork', run: () => forkTask(t) },
     '-',

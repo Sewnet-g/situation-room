@@ -218,7 +218,7 @@ function renderBar() {
   $('#remove').hidden = t.id === 'builder';
   const panel = hasPanel(t);
   $('#reviewbtn').hidden = !panel;
-  $('#rlabel').textContent = k === 'review' ? 'Review' : PTAB[ptabOf(t)];
+  $('#rlabel').textContent = PTAB[ptabOf(t)];
   $('#reviewbtn').classList.toggle('on', panel && drawerOpen);
   $('#prlink').hidden = !prOf(t);
   if (prOf(t)) $('#prlink').href = prOf(t).url;
@@ -319,7 +319,9 @@ async function show() {
   $('#drawer').hidden = !panel;
   if (!t) return;
   renderDnav(t);
-  if (panel || (k === 'review' && tab === 'diff')) await loadPanel();
+  if (panel) await loadPanel();
+  // The PR diff reads the review data, whichever tab the drawer is on.
+  if (k === 'review' && tab === 'diff' && (!panel || ptabOf(t) !== 'review')) await loadReview();
   if (tab === 'diff') return k === 'review' ? renderPrDiff() : loadDiff(t);
   const x = term(t.id, tab);
   x.el.hidden = false;
@@ -491,9 +493,10 @@ function setMode(m) {
 
 // ---- Side panel (review / feedback) ----
 
-const PTAB = { feedback: 'Feedback', changes: 'Changes', ship: 'Ship' };
+const PTAB = { review: 'Review', feedback: 'Feedback', changes: 'Changes', ship: 'Ship' };
 const hasPanel = (t) => !!t && (kindOf(t) === 'review' || !!t.git || hasFb(t));
-const ptabsOf = (t) => (kindOf(t) === 'review' ? [] : hasFb(t) ? ['feedback', 'changes', 'ship'] : ['changes', 'ship']);
+// A review task that opted in to contributing keeps its review tab and gains Changes and Ship.
+const ptabsOf = (t) => (kindOf(t) === 'review' ? (t.contribute ? ['review', 'changes', 'ship'] : ['review']) : hasFb(t) ? ['feedback', 'changes', 'ship'] : ['changes', 'ship']);
 function ptabOf(t) {
   const v = store.get(`ptab:${kindOf(t)}`, null);
   const all = ptabsOf(t);
@@ -503,7 +506,7 @@ function ptabOf(t) {
 function renderDnav(t) {
   const tabs = ptabsOf(t);
   const nav = $('#dnav');
-  nav.hidden = !tabs.length;
+  nav.hidden = tabs.length < 2;
   const on = ptabOf(t);
   nav.innerHTML = tabs.map((x) => `<button data-p="${x}" class="${x === on ? 'on' : ''}">${PTAB[x]}<em id="dn-${x}"></em></button>`).join('');
   for (const b of $$('button', nav)) b.onclick = () => setPtab(b.dataset.p);
@@ -519,9 +522,8 @@ function setPtab(p) {
 
 function loadPanel(force) {
   const t = cur();
-  const k = kindOf(t);
-  if (k === 'review') return loadReview(force);
   const p = ptabOf(t);
+  if (p === 'review') return loadReview(force);
   if (p === 'feedback') return loadFeedback(force);
   if (p === 'changes') return loadChanges(force);
   if (p === 'ship') return loadShip(force);
@@ -626,7 +628,7 @@ const suggestionOf = (body) => (/```suggestion/.test(body) ? md(body.slice(body.
 function renderReview() {
   const d = $('#dbody');
   const t = cur();
-  if (!review || $('#drawer').hidden || review.id !== current) return;
+  if (!review || $('#drawer').hidden || review.id !== current || ptabOf(t) !== 'review') return;
   const dr = review.draft;
   dr.comments ||= [];
   const live = dr.comments.filter((c) => !c.skip && c.body.trim());
@@ -642,6 +644,7 @@ function renderReview() {
     <header class="dh">
       <div><h4>Your review</h4><small>#${review.pr.number} · @${esc(review.pr.author)}</small></div>
       ${agentBadge(t)}
+      ${t.contribute ? '' : '<button class="ghost xs" id="rv-contribute" title="Check out the PR branch so the agent can change it and you can push to it">Contribute</button>'}
     </header>
     <div class="db">
       ${hist.length ? `<details class="hist"><summary>${plural(hist.length, 'posted review')}</summary>${hist.slice().reverse().map((h) =>
@@ -661,6 +664,7 @@ function renderReview() {
   const sum = $('#rv-summary');
   autogrow(sum);
   sum.oninput = () => { dr.summary = sum.value; persist(); updateSubmit(); };
+  if ($('#rv-contribute')) $('#rv-contribute').onclick = () => contribute(t);
   for (const b of $$('#rv-event button')) b.onclick = () => { dr.event = b.dataset.e; persist(); renderReview(); };
   $('#rv-submit').onclick = submit;
   const file = t.reviewFile;
@@ -760,6 +764,7 @@ function renderPrDiff() {
 function addComment(l) {
   const c = { path: l.file, line: l.line, side: l.side, body: '' };
   review.draft.comments.push(c);
+  reviewTab();
   drawerOpen = true;
   store.set('drawer', '1');
   $('#drawer').hidden = false;
@@ -770,6 +775,7 @@ function addComment(l) {
 }
 
 function focusComment(c) {
+  reviewTab();
   if ($('#drawer').hidden) { drawerOpen = true; $('#drawer').hidden = false; renderReview(); }
   const el = $('#rv-list').children[review.draft.comments.indexOf(c)];
   el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -785,6 +791,31 @@ function jumpTo(c) {
     el.classList.add('flash');
     setTimeout(() => el.classList.remove('flash'), 1400);
   }, 60);
+}
+
+// A contributing review task may be on Changes or Ship; comments need the Review tab.
+function reviewTab() {
+  if (ptabOf(cur()) === 'review') return;
+  store.set('ptab:review', 'review');
+  renderDnav(cur());
+  renderReview();
+}
+
+async function contribute(t) {
+  const ok = await confirmSheet({
+    title: `Contribute to #${t.pr.number}?`,
+    body: `<p>Checks out the PR's branch in this task's worktree and restarts the agent with permission to edit it. Ship then pushes your commits to that branch; no new PR.</p>
+      ${t.status === 'working' ? '<p class="warn">The agent is mid-turn; restarting stops that turn.</p>' : ''}`,
+    ok: 'Check out the branch',
+  });
+  if (!ok) return;
+  try {
+    const r = await api(`/review/${t.id}/contribute`, { method: 'POST' });
+    const x = terms.get(`${t.id}:claude`);
+    if (x) x.attached = false;
+    toast(`On <b>${esc(r.branch)}</b>. The agent can now edit it.`, 'ok');
+    setTimeout(show, 400);
+  } catch (e) { toast(esc(e.message), 'bad', 7000); }
 }
 
 async function submit() {

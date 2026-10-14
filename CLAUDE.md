@@ -18,6 +18,7 @@ Config is `~/.situation-room/config.json` (see `config.example.json`); defaults 
 
 - The PRs tab (⌘P) lists open PRs for `prRepos`.
 - Review opens a task in a detached worktree on `pull/N/head`. The agent writes a draft to `~/.situation-room/reviews/<task>.json`: `{summary, event, comments:[{path,line,side,body}]}`.
+- Contribute (`POST /review/:id/contribute`, `t.contribute`) moves the worktree onto the PR's own branch tracking origin and relaunches the agent with edit rights, which are fixed at launch. It adds Changes and Ship; Ship rebases onto and pushes to that branch, never renames it or opens a PR. Fork PRs are refused.
 - The drawer (⌘E) edits the draft. Submit posts it through `gh api` as the user. Never mention Claude, AI or tooling in anything posted.
 - PRs → Mine sends feedback on your own PR to the task whose checkout is on its branch (`fb`: `<task>.feedback.json` drafts and threads, the Feedback tab, the address prompt as its next message). Only with no such task, or a session ID, does it open an `address` task on the real branch. Dismissed entries stay untouched.
 

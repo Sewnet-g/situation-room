@@ -391,7 +391,7 @@ async function runShip() {
     if (x.startsWith('git switch -c')) return ['branch', `Create branch <b>${esc(d.branch)}</b>`];
     if (x.startsWith('git branch -m')) return ['branch', `Rename branch to <b>${esc(d.branch)}</b>`];
     if (x.startsWith('git add')) return ['commit', esc(x.match(/commit -q -m '((?:[^']|'\\'')*)'/)?.[1].replace(/'\\''/g, "'") || 'Commit')];
-    if (x.startsWith('git pull --rebase')) return ['branch', `Rebase onto the latest <b>${esc(s.baseName)}</b>`];
+    if (x.startsWith('git pull --rebase')) return ['branch', `Rebase onto the latest <b>${esc(s.onMain ? s.baseName : s.branch)}</b>`];
     if (x.startsWith('git push') && s.onMain) return ['ship', `Push straight to <b>${esc(s.baseName)}</b> on origin`];
     if (x.startsWith('git push')) return ['ship', `Push to <b>origin</b>`];
     return ['review', `Open <b>draft</b> PR into <b>${esc(s.baseName)}</b>, assigned to you${d.pr.label ? `, labelled <b>${esc(d.pr.label)}</b>` : ''}`];
