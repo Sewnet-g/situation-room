@@ -17,13 +17,14 @@ const SCROLLBACK = 400_000;
 const MODE_RE = /\x1b\[\?([\d;]+)([hl])/g;
 const INPUT_MODES = new Set(['1000', '1002', '1003', '1004', '1006', '2004']);
 const REVIEWS = path.join(HOME, 'reviews');
+const NOTES = path.join(HOME, 'notes');
 const PI_DIR = path.join(HOME, 'pi-agent');
 const PI_SESSIONS = path.join(HOME, 'pi-sessions');
 let MODELS = JSON.parse(fs.readFileSync(path.join(__dirname, 'models.json'), 'utf8'));
 const piFile = (t) => { try { const f = fs.readdirSync(PI_SESSIONS).find((n) => n.endsWith(`_${t.sessionId}.jsonl`)); return f && path.join(PI_SESSIONS, f); } catch {} };
 const modelOf = (id) => MODELS.find((m) => m.id === id);
 const PRICES = path.join(HOME, 'prices.json');
-for (const d of ['worktrees', 'reviews', 'pi-agent', 'pi-sessions']) fs.mkdirSync(path.join(HOME, d), { recursive: true });
+for (const d of ['worktrees', 'reviews', 'notes', 'pi-agent', 'pi-sessions']) fs.mkdirSync(path.join(HOME, d), { recursive: true });
 // Pi gets the same global instructions as Claude Code.
 try { fs.symlinkSync(path.join(os.homedir(), '.claude/CLAUDE.md'), path.join(PI_DIR, 'CLAUDE.md')); } catch {}
 
@@ -225,7 +226,7 @@ function piArgs(t, env) {
     PI_CODING_AGENT_DIR: PI_DIR, PI_SKIP_VERSION_CHECK: '1', PI_TELEMETRY: '0', SR_PORT: String(PORT),
     SR_GATEWAY_URL: gw?.url || '', SR_GATEWAY_KEY: gw?.key || '', SR_MODELS: gw ? (path.isAbsolute(config.gateway.models.replace(/^~/, '/')) ? expand(config.gateway.models) : path.join(HOME, config.gateway.models)) : '', SR_PRICES: PRICES, SR_MODEL: gw && model ? `gateway/${model}` : model,
     SR_SESSION: piFile(t) || '', SR_FORK: (t.forkFrom && piFile({ sessionId: t.forkFrom })) || t.forkFrom || '', SR_EFFORT: t.effort || '',
-    SR_GATE: t.reviewFile ? JSON.stringify({ write: [REVIEWS, ...own], bash: READ_CMDS }) : '',
+    SR_GATE: t.reviewFile ? JSON.stringify({ write: [REVIEWS, NOTES, ...own], bash: READ_CMDS }) : '',
   });
   // An existing file resumes from any cwd; otherwise the exact id is created, forked from the source when asked.
   const sess = env.SR_SESSION ? '--session "$SR_SESSION"' : `${t.forkFrom ? '--fork "$SR_FORK" ' : ''}--session-id ${t.sessionId}`;
@@ -239,13 +240,17 @@ function piArgs(t, env) {
 // Gateway variables must be absent for a login dir, not blank: blank ones break the login.
 const claudeEnv = (t) => (loginDir(t) ? { CLAUDE_CONFIG_DIR: loginDir(t), ANTHROPIC_BASE_URL: null, ANTHROPIC_AUTH_TOKEN: null, ANTHROPIC_MODEL: null } : {});
 
-// The guide is prompts/debug.md plus the repo's notes from config.debug (a path relative to the repo, or absolute).
-function debugPrompt(t) {
-  const d = debugSettings(t.repoPath);
-  let text = fs.readFileSync(path.join(__dirname, 'prompts', 'debug.md'), 'utf8');
-  const notes = d.notes && expand(path.isAbsolute(d.notes.replace(/^~/, '/')) ? d.notes : path.join(t.cwd, d.notes));
-  if (notes && fs.existsSync(notes)) text += `\n\n# About this project\n\n${fs.readFileSync(notes, 'utf8')}`;
-  if (d.namespace) text += `\n\nLogs: this project runs in Kubernetes namespace \`${d.namespace}\`; sr-logs uses it by default.`;
+const noteFile = (t) => path.join(NOTES, `${t.id}.md`);
+// Every task gets prompts/task.md; debug tasks add prompts/debug.md and the repo's notes from config.debug.
+function taskPrompt(t) {
+  let text = fs.readFileSync(path.join(__dirname, 'prompts', 'task.md'), 'utf8').replaceAll('{{note}}', noteFile(t));
+  if (kindOf(t) === 'debug') {
+    const d = debugSettings(t.repoPath);
+    text += `\n\n${fs.readFileSync(path.join(__dirname, 'prompts', 'debug.md'), 'utf8')}`;
+    const notes = d.notes && expand(path.isAbsolute(d.notes.replace(/^~/, '/')) ? d.notes : path.join(t.cwd, d.notes));
+    if (notes && fs.existsSync(notes)) text += `\n\n# About this project\n\n${fs.readFileSync(notes, 'utf8')}`;
+    if (d.namespace) text += `\n\nLogs: this project runs in Kubernetes namespace \`${d.namespace}\`; sr-logs uses it by default.`;
+  }
   const f = path.join(HOME, 'prompts', `${t.id}.md`);
   fs.mkdirSync(path.dirname(f), { recursive: true });
   fs.writeFileSync(f, text);
@@ -266,7 +271,6 @@ function debugEnv(t) {
   if (d.index) env.SR_LOGS_INDEX = d.index;
   if (config.logs?.url && !env.SR_LOGS_URL) env.SR_LOGS_URL = config.logs.url;
   env.PATH = `${path.join(__dirname, 'tools')}:${process.env.PATH}`;
-  env.SR_PROMPT_FILE = debugPrompt(t);
   return env;
 }
 // Gateway ids map to Anthropic's own names for a login dir.
@@ -286,6 +290,7 @@ function spawn(t, kind, cols = 120, rows = 40) {
   if (procs.has(key)) return procs.get(key);
   const first = !t.started && t.prompt ? t.prompt : t.pending || '';
   const env = cleanEnv({ SR_TASK: t.id, SR_NAME: t.name, SR_PROMPT: first, SR_ALLOW: allowFor(t), ...claudeEnv(t), ...debugEnv(t) });
+  if (kind === 'claude') env.SR_PROMPT_FILE = taskPrompt(t);
   if (t.pending) { delete t.pending; save(); }
   let file, args;
   if (kind === 'claude' && t.harness === 'pi') {
@@ -296,6 +301,7 @@ function spawn(t, kind, cols = 120, rows = 40) {
     const sess = t.started ? ['--resume', t.sessionId] : ['--session-id', t.sessionId];
     // Fork tasks copy a live session fresh on every launch instead of sharing its transcript.
     if (t.fork) sess.push('--fork-session');
+    sess.push(`--add-dir=${NOTES}`);
     if (t.reviewFile) sess.push(`--add-dir=${REVIEWS}`, '--allowedTools="$SR_ALLOW"');
     // A task that adopted PR feedback writes its reply drafts there too.
     else if (t.fb) sess.push(`--add-dir=${REVIEWS}`);
@@ -1245,6 +1251,15 @@ function shipDiff(cwd, files) {
   return d.length > 90_000 ? `${d.slice(0, 90_000)}\n[diff truncated]` : d;
 }
 
+// A note older than the last commit belongs to work already shipped.
+function freshNote(t) {
+  try {
+    const f = noteFile(t);
+    const head = Number(git(t.cwd, 'log', '-1', '--format=%ct')) * 1000;
+    return fs.statSync(f).mtimeMs > head ? fs.readFileSync(f, 'utf8').trim().slice(0, 8000) : '';
+  } catch { return ''; }
+}
+
 async function shipPlan(t, note) {
   const s = shipState(t);
   if (!s.files.length) throw new Error('No uncommitted changes to plan.');
@@ -1252,6 +1267,7 @@ async function shipPlan(t, note) {
   try { history = git(t.cwd, 'log', '--format=%s', '--no-merges', '-30', s.base).split('\n'); } catch {}
   const prev = s.draft.commits?.length ? `\nThe current plan, which the note may be refining:\n${JSON.stringify({ commits: s.draft.commits, branch: s.draft.branch, pr: s.draft.pr })}\n` : '';
   const kinds = s.slug && !s.onMain ? kindLabels(s.slug) : [];
+  const shipNote = freshNote(t);
   const out = await claudeJson(`Plan how to commit ${s.onMain ? `these changes straight to ${s.baseName} (no branch, no pull request)` : 'and open a pull request for these changes'} in the ${path.basename(t.repoPath || t.cwd)} repo.
 
 Task: ${t.name}
@@ -1268,7 +1284,7 @@ ${s.files.map((f) => `${f.st} ${f.path}`).join('\n')}
 
 Diff:
 ${shipDiff(t.cwd, s.files)}
-${prev}${note ? `\nNote from the author: ${note}\n` : ''}
+${prev}${shipNote ? `\nThe session that made the change left this ship note. Base the commit messages and PR on it:\n<note>\n${shipNote}\n</note>\n` : ''}${note ? `\nNote from the author: ${note}\n` : ''}
 ${kinds.length ? `Pick the one label that best describes the change, from this repo's labels:\n${kinds.map((l) => `- ${l.name}: ${l.description || ''}`).join('\n')}\n` : ''}
 Answer with only a JSON object {"commits": [{"message": string, "files": [string]}], "branch": string, "pr": {"title": string, "body": string${kinds.length ? ', "label": string' : ''}}}.
 commits: split into several commits only where the changes are clearly separate concerns; otherwise one commit. Order them so each builds on the last.
@@ -1276,7 +1292,7 @@ Every changed file appears in exactly one commit. Each message is one line, impe
 ${s.jiraKey ? `Start each message and the PR title with ${s.jiraKey} the way the history does.` : 'If the history marks commits without a ticket in some way, follow it.'}
 The "Bump chart appVersion" style commits are automated; do not copy them.
 branch: ${s.onBase || /^(situation-room|cockpit)\//.test(s.branch) ? 'a short kebab-case branch name for this work, no prefix' : `"${s.branch}"`}.
-pr.title: the main commit's style. pr.body: two to five short lines of markdown saying what changed and why. No headings, no checklist, no testing section, no filler. ${NO_AI}`, t);
+pr.title: the main commit's style. pr.body: ${shipNote ? 'the PR body from the ship note, keeping its wording and facts' : 'two to five short lines of markdown saying what changed and why'}. No headings, no checklist, no testing section, no filler. ${NO_AI}`, t);
   const known = new Set(s.files.map((f) => f.path));
   const seen = new Set();
   const commits = (out.commits || []).map((c) => ({
@@ -1415,6 +1431,7 @@ function removeTask(id, { worktree = true, force = false, closed = false } = {})
   for (const k of ['claude', 'shell']) procs.get(`${id}:${k}`)?.pty.kill();
   // The branch stays; only the worktree folder goes.
   if (wt) dropWorktree(t.repoPath, t.cwd);
+  fs.rmSync(noteFile(t), { force: true });
   state.tasks = state.tasks.filter((x) => x.id !== id);
   save();
   publish();
