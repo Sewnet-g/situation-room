@@ -567,7 +567,7 @@ dialog::backdrop { background: rgba(5,6,10,.55); backdrop-filter: blur(3px); ani
 .flow.onmain b, .note.onmain b { color: var(--warn); }
 .prmeta { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; font-size: 12px; }
 .prmeta .prl { display: flex; align-items: center; gap: 8px; color: var(--fg2); font-weight: 500; }
-.prmeta select { height: 26px; font-size: 12px; }
+.prmeta select { height: 26px; padding: 0 26px 0 8px; font-size: 12px; width: auto; }
 .note.onmain { border-left: 2px solid var(--warn); padding-left: 8px; }
 #dlgtype { align-self: flex-start; margin: -4px 0 2px; }
 .sheet textarea[name=report] { font: 12px/1.5 var(--mono); resize: vertical; min-height: 110px; }
