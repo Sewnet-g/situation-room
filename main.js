@@ -1,5 +1,5 @@
 const { app, BrowserWindow, Menu, ipcMain, Notification, shell, nativeTheme, dialog } = require('electron');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -11,6 +11,9 @@ try {
   process.env.SR_LOGIN_DIRS = Object.values(sp).map((v) => v.claudeConfigDir).filter(Boolean).map((d) => d.replace(/^~(?=\/|$)/, os.homedir())).join(':');
 } catch { process.env.SR_LOGIN_DIRS = path.join(os.homedir(), '.claude-personal'); }
 const { summary, detail } = require('./usage');
+// Opened from Finder the PATH lacks Homebrew, so node, gh and claude come from the login shell's.
+try { process.env.PATH = execFileSync(process.env.SHELL || '/bin/zsh', ['-lc', 'printf %s "$PATH"'], { encoding: 'utf8', timeout: 5000 }) || process.env.PATH; } catch {}
+if (!app.commandLine.hasSwitch('remote-debugging-port')) app.commandLine.appendSwitch('remote-debugging-port', '9333');
 
 const PORT = Number(process.env.SR_PORT || 7777);
 const LOG = path.join(os.homedir(), '.situation-room', 'daemon.log');

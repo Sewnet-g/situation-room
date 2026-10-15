@@ -71,7 +71,7 @@ Pty replay trims old output, so the daemon tracks input modes (bracketed paste, 
 ## Changing yourself safely
 
 - `ui/*`: saving reloads the window automatically.
-- `main.js`: the user quits and restarts the app. Sessions survive.
+- `main.js`: the user quits and reopens the app (`~/Applications/Situation Room.app`, built by `scripts/install-app.sh`, which runs this checkout's `main.js`). Sessions survive.
 - `daemon.js`: **restarting it kills every session, including yours.** Sessions resume, but anything mid-flight is lost. Finish your reply, then ask the user to use View → Restart Daemon.
 - Syntax-check before handing over: `node --check daemon.js main.js usage.js pi/*.js ui/*.js`.
 - Test daemon changes on a throwaway daemon, never the user's: `SR_PORT=7791 SR_HOME=/tmp/x node daemon.js`, a temp repo with a bare origin at a `…/github.com/<owner>/<repo>.git` path (that is how the slug is read), and stub `gh`/`claude` on PATH. The pty runs a login shell, which resets PATH, so the real `claude` can still start: check `ps` and kill it.

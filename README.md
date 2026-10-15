@@ -40,6 +40,8 @@ npm install
 npm start
 ```
 
+`scripts/install-app.sh` puts a clickable `Situation Room.app` in `~/Applications` that runs this checkout. Run it again after upgrading Electron.
+
 The app starts a background daemon that owns the sessions, so quitting the window leaves your tasks running. View → Restart Daemon restarts it; sessions resume.
 
 ## Configure
