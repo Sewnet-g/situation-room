@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d2029"/>
+      <stop offset="1" stop-color="#0b0c10"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="512" cy="512" r="330" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8b7cff" stop-opacity=".16"/>
+      <stop offset="1" stop-color="#8b7cff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="sweep" gradientUnits="userSpaceOnUse" x1="400" y1="400" x2="250" y2="550">
+      <stop offset="0" stop-color="#a99bff" stop-opacity=".55"/>
+      <stop offset="1" stop-color="#8b7cff" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="scope"><circle cx="512" cy="512" r="320"/></clipPath>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="#fff" stroke-opacity=".08" stroke-width="3"/>
+  <circle cx="512" cy="512" r="330" fill="url(#glow)"/>
+  <g fill="none" stroke="#8b7cff" stroke-width="5">
+    <circle cx="512" cy="512" r="320" stroke-opacity=".55"/>
+    <circle cx="512" cy="512" r="215" stroke-opacity=".32"/>
+    <circle cx="512" cy="512" r="110" stroke-opacity=".32"/>
+    <path d="M512 192v640M192 512h640" stroke-opacity=".2"/>
+  </g>
+  <g clip-path="url(#scope)">
+    <path d="M512 512 L278.6 278.6 A330 330 0 0 0 182 512 Z" fill="url(#sweep)"/>
+  </g>
+  <path d="M512 512 L285.7 285.7" stroke="#c9c0ff" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="512" cy="512" r="14" fill="#c9c0ff"/>
+  <circle cx="350" cy="440" r="30" fill="#4fd18b" fill-opacity=".25"/>
+  <circle cx="350" cy="440" r="17" fill="#4fd18b"/>
+  <circle cx="668" cy="420" r="15" fill="#f2b54b"/>
+  <circle cx="610" cy="660" r="15" fill="#a99bff"/>
+  <circle cx="430" cy="260" r="12" fill="#a99bff" fill-opacity=".6"/>
+</svg>

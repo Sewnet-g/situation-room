@@ -75,6 +75,7 @@ ipcMain.on('notify', (_e, { title, body }) => {
 });
 
 app.whenReady().then(async () => {
+  app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
   nativeTheme.themeSource = 'dark';
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { role: 'appMenu' },
