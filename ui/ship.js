@@ -1,7 +1,7 @@
 // Changes and Ship drawer tabs. Loaded after app.js.
 
 const ST = { M: 'Modified', A: 'Added', D: 'Deleted', R: 'Renamed', C: 'Copied', U: 'Conflict' };
-const sig = (s) => JSON.stringify([s.branch, s.files, s.commits, s.pr]);
+const sig = (s) => JSON.stringify([s.branch, s.files, s.commits, s.pr, s.draft?.noteAt]);
 
 // ---- Changes ----
 
@@ -94,7 +94,7 @@ function reconcile(s) {
   d.pr ||= { title: '', body: '' };
   const live = new Set(s.files.map((f) => f.path));
   for (const c of d.commits) c.files = (c.files || []).filter((p) => live.has(p));
-  d.commits = d.commits.filter((c) => c.files.length || c.message);
+  d.commits = d.commits.filter((c) => (c.files.length || c.message) && !s.landed?.includes((c.message || '').trim()));
   if (!d.commits.length && s.files.length && s.hint) d.commits.push({ message: s.hint, files: s.files.map((f) => f.path) });
   if (!d.branch) d.branch = s.onBase ? '' : s.branch;
   return d;
@@ -434,8 +434,10 @@ setInterval(async () => {
   if (!st || current !== t.id) return;
   if (p === 'changes' && changes?.id === t.id && sig(st) !== changes.sig) loadChanges(true);
   if (p === 'ship' && ship?.id === t.id && !ship.busy && sig(st) !== ship.sig) {
+    // A rewritten ship note replaces the PR text; everything else stays as edited here.
+    const fromNote = st.draft?.noteAt && st.draft.noteAt !== ship.d.noteAt;
     ship.s = st; ship.sig = sig(st);
-    ship.d = reconcile({ ...st, draft: ship.d });
+    ship.d = reconcile({ ...st, draft: fromNote ? { ...ship.d, pr: st.draft.pr, noteAt: st.draft.noteAt } : ship.d });
     renderShip();
   }
 }, 4000);

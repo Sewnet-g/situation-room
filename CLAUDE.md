@@ -25,7 +25,7 @@ Config is `~/.situation-room/config.json` (see `config.example.json`); defaults 
 ## Ship
 
 - Drawer tabs: Changes (working-tree diff) and Ship. Ship drafts commits, branch and a draft PR via `claude -p`; the draft lives in `~/.situation-room/reviews/<task>.ship.json`.
-- Every task launches with `prompts/task.md` appended to its system prompt (both harnesses): Situation Room ships, so the agent never runs or hands over ship commands. It writes a ship note to `~/.situation-room/notes/<task>.md`, and the planner uses it when it's newer than HEAD.
+- Every task launches with `prompts/task.md` appended to its system prompt (both harnesses): Situation Room ships, so the agent never runs or hands over ship commands. It writes a ship note to `~/.situation-room/notes/<task>.md`: PR title, then body. A note newer than HEAD and than the user's last edit of the PR text (`prAt`, set on PUT only when title or body change) replaces the draft's PR title and body (`noteAt`).
 - Ship only types the commands into the task's Shell. The user presses Enter. PRs are always `--draft`. They're `--assignee @me`, and the plan picks one label from the repo's kind labels (`KPI:*`, `bug`, `enhancement`, …, read with `gh label list`, cached an hour); an unknown label is rejected before the command is built.
 
 ## PR watch

@@ -1116,7 +1116,7 @@ async function jiraMeta(project) {
 function claudeJson(prompt, t) {
   return new Promise((resolve, reject) => {
     execFile(process.env.SHELL || '/bin/zsh', ['-lc', 'exec claude -p --no-session-persistence --tools "" --output-format json "$SR_Q"'],
-      { cwd: os.tmpdir(), env: cleanEnv({ SR_Q: prompt, ...claudeEnv(t) }), timeout: 180_000, maxBuffer: 10e6 }, (err, out) => {
+      { cwd: os.tmpdir(), env: cleanEnv({ SR_Q: prompt.replaceAll('\0', ''), ...claudeEnv(t) }), timeout: 180_000, maxBuffer: 10e6 }, (err, out) => {
         try {
           const r = JSON.parse(out);
           if (r.is_error) throw new Error(r.result);
@@ -1235,9 +1235,13 @@ function shipState(t) {
   const slug = originSlug(t.repoPath || cwd);
   const onBase = branch === baseName || branch === 'HEAD';
   const pr = slug && !onBase ? branchPr(slug, branch) : null;
-  const draft = readJson(shipFile(t), { commits: [], branch: '', pr: { title: '', body: '' } });
+  const draft = applyNote(t, readJson(shipFile(t), { commits: [], branch: '', pr: { title: '', body: '' } }));
   const hint = hasFeedback(t) ? readJson(fbFile(t), {}).commitMessage || '' : '';
-  return { branch, base, baseName, onBase, upstream, slug, labels: slug && !t.onMain ? kindLabels(slug) : [], files: changedFiles(cwd), commits, pr: t.onMain ? null : pr, jiraKey: jiraKeyOf(t, branch), draft, hint, onMain: !!(t.onMain && onBase && mainAllowed(t)) };
+  // Planned commits that already landed would otherwise hide Plan commits and catch new edits.
+  let landed = [];
+  try { landed = git(cwd, 'log', '-30', '--format=%s').split('\n'); } catch {}
+  draft.commits = (draft.commits || []).filter((c) => !landed.includes(String(c.message || '').trim()));
+  return { branch, base, baseName, onBase, upstream, slug, labels: slug && !t.onMain ? kindLabels(slug) : [], files: changedFiles(cwd), commits, landed, pr: t.onMain ? null : pr, jiraKey: jiraKeyOf(t, branch), draft, hint, onMain: !!(t.onMain && onBase && mainAllowed(t)) };
 }
 
 function shipDiff(cwd, files) {
@@ -1245,7 +1249,9 @@ function shipDiff(cwd, files) {
   try { d = gitRaw(cwd, 'diff', 'HEAD', '--stat', '--patch'); } catch {}
   for (const f of files.filter((x) => x.st === 'A')) {
     try {
-      if (!d.includes(`b/${f.path}\n`)) d += `\n--- new file ${f.path}\n${fs.readFileSync(path.join(cwd, f.path), 'utf8').slice(0, 4000)}`;
+      if (d.includes(`b/${f.path}\n`)) continue;
+      const text = fs.readFileSync(path.join(cwd, f.path), 'utf8').slice(0, 4000);
+      d += `\n--- new file ${f.path}\n${text.includes('\0') ? '[binary]' : text}`;
     } catch {}
   }
   return d.length > 90_000 ? `${d.slice(0, 90_000)}\n[diff truncated]` : d;
@@ -1254,10 +1260,22 @@ function shipDiff(cwd, files) {
 // A note older than the last commit belongs to work already shipped.
 function freshNote(t) {
   try {
-    const f = noteFile(t);
-    const head = Number(git(t.cwd, 'log', '-1', '--format=%ct')) * 1000;
-    return fs.statSync(f).mtimeMs > head ? fs.readFileSync(f, 'utf8').trim().slice(0, 8000) : '';
-  } catch { return ''; }
+    const at = fs.statSync(noteFile(t)).mtimeMs;
+    if (at <= Number(git(t.cwd, 'log', '-1', '--format=%ct')) * 1000) return null;
+    const lines = fs.readFileSync(noteFile(t), 'utf8').split('\n').filter((l) => !/^(🤖 Generated with|Co-Authored-By:)/i.test(l.trim()));
+    const i = lines.findIndex((l) => l.trim());
+    if (i < 0) return null;
+    return { at, title: lines[i].replace(/^#+\s*/, '').trim(), body: lines.slice(i + 1).join('\n').trim().slice(0, 8000) };
+  } catch { return null; }
+}
+// Whichever is newer, the note or the user's last edit of the PR text (prAt), holds the PR title and body.
+function applyNote(t, draft) {
+  const n = freshNote(t);
+  if (!n || n.at <= Math.max(draft.noteAt || 0, draft.prAt || draft.plannedAt || 0)) return draft;
+  draft.pr = { ...draft.pr, title: n.title || draft.pr?.title || '', body: n.body };
+  draft.noteAt = n.at;
+  writeJson(shipFile(t), draft);
+  return draft;
 }
 
 async function shipPlan(t, note) {
@@ -1284,7 +1302,7 @@ ${s.files.map((f) => `${f.st} ${f.path}`).join('\n')}
 
 Diff:
 ${shipDiff(t.cwd, s.files)}
-${prev}${shipNote ? `\nThe session that made the change left this ship note. Base the commit messages and PR on it:\n<note>\n${shipNote}\n</note>\n` : ''}${note ? `\nNote from the author: ${note}\n` : ''}
+${prev}${shipNote ? `\nThe session that made the change wrote this PR. Base the commit messages on it:\n<pr>\n${shipNote.title}\n\n${shipNote.body}\n</pr>\n` : ''}${note ? `\nNote from the author: ${note}\n` : ''}
 ${kinds.length ? `Pick the one label that best describes the change, from this repo's labels:\n${kinds.map((l) => `- ${l.name}: ${l.description || ''}`).join('\n')}\n` : ''}
 Answer with only a JSON object {"commits": [{"message": string, "files": [string]}], "branch": string, "pr": {"title": string, "body": string${kinds.length ? ', "label": string' : ''}}}.
 commits: split into several commits only where the changes are clearly separate concerns; otherwise one commit. Order them so each builds on the last.
@@ -1292,7 +1310,7 @@ Every changed file appears in exactly one commit. Each message is one line, impe
 ${s.jiraKey ? `Start each message and the PR title with ${s.jiraKey} the way the history does.` : 'If the history marks commits without a ticket in some way, follow it.'}
 The "Bump chart appVersion" style commits are automated; do not copy them.
 branch: ${s.onBase || /^(situation-room|cockpit)\//.test(s.branch) ? 'a short kebab-case branch name for this work, no prefix' : `"${s.branch}"`}.
-pr.title: the main commit's style. pr.body: ${shipNote ? 'the PR body from the ship note, keeping its wording and facts' : 'two to five short lines of markdown saying what changed and why'}. No headings, no checklist, no testing section, no filler. ${NO_AI}`, t);
+pr.title: the main commit's style. pr.body: ${shipNote ? (note ? 'the PR body above, changed as the author\'s note asks' : 'repeat the PR body above') : 'two to five short lines of markdown saying what changed and why'}. No headings, no checklist, no testing section, no filler. ${NO_AI}`, t);
   const known = new Set(s.files.map((f) => f.path));
   const seen = new Set();
   const commits = (out.commits || []).map((c) => ({
@@ -1303,7 +1321,7 @@ pr.title: the main commit's style. pr.body: ${shipNote ? 'the PR body from the s
   if (left.length) commits.length ? commits.at(-1).files.push(...left) : commits.push({ message: 'Update', files: left });
   // Only a label the repo really has is kept; a made-up one would fail the PR command.
   const label = kinds.find((l) => l.name.toLowerCase() === String(out.pr?.label || '').toLowerCase())?.name || '';
-  const draft = { commits, branch: String(out.branch || s.branch).trim(), pr: { title: out.pr?.title || commits[0]?.message || '', body: out.pr?.body || '', label }, plannedAt: Date.now() };
+  const draft = { commits, branch: String(out.branch || s.branch).trim(), pr: { title: (!note && shipNote?.title) || out.pr?.title || commits[0]?.message || '', body: (!note && shipNote?.body) || out.pr?.body || '', label }, plannedAt: Date.now(), ...(shipNote && { noteAt: shipNote.at }) };
   writeJson(shipFile(t), draft);
   return draft;
 }
@@ -1572,7 +1590,14 @@ const server = http.createServer(async (req, res) => {
       if (!t) return json(404, { error: 'no such task' });
       if (req.method === 'GET' && parts[2] === 'diff') { const d = fullDiff(t.cwd); res.writeHead(200, { 'content-type': 'text/plain' }); return res.end(d); }
       if (req.method === 'GET') return json(200, shipState(t));
-      if (req.method === 'PUT') { writeJson(shipFile(t), readJsonStr(await body(req))); return json(200, {}); }
+      if (req.method === 'PUT') {
+        const d = readJsonStr(await body(req));
+        const old = readJson(shipFile(t), {});
+        d.noteAt = Math.max(d.noteAt || 0, old.noteAt || 0) || undefined;
+        d.prAt = d.pr?.title !== old.pr?.title || d.pr?.body !== old.pr?.body ? Date.now() : old.prAt;
+        writeJson(shipFile(t), d);
+        return json(200, {});
+      }
       if (req.method === 'POST' && parts[2] === 'plan') return json(200, await shipPlan(t, readJsonStr(await body(req)).note));
       if (req.method === 'POST' && parts[2] === 'command') return json(200, shipCommand(t, readJsonStr(await body(req))));
     }
